@@ -1,30 +1,39 @@
+// ✅ src/app/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
+
+// 날씨 타입 정의
+interface WeatherData {
+  current: {
+    condition: {
+      text: string
+      icon: string
+    }
+    temp_c: number
+  }
+  location: {
+    name: string
+  }
+}
 
 export default function Home() {
   const [time, setTime] = useState('')
   const [date, setDate] = useState('')
   const [remaining, setRemaining] = useState('')
-  const [weather, setWeather] = useState<any>(null)
+  const [weather, setWeather] = useState<WeatherData | null>(null)
 
   useEffect(() => {
     const updateTime = () => {
       const now = new Date()
-
-      // 요일 포함한 날짜 포맷
       const days = ['일', '월', '화', '수', '목', '금', '토']
       const dayName = days[now.getDay()]
-      setDate(
-        `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 (${dayName})`
-      )
-
+      setDate(`${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 (${dayName})`)
       setTime(now.toLocaleTimeString('ko-KR'))
 
-      // 퇴근 시간 계산
       const endTime = new Date()
       endTime.setHours(17, 30, 0, 0)
-
       const diffMs = endTime.getTime() - now.getTime()
 
       if (diffMs <= 0) {
@@ -33,7 +42,6 @@ export default function Home() {
         const diffHrs = Math.floor(diffMs / (1000 * 60 * 60))
         const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
         const diffSecs = Math.floor((diffMs % (1000 * 60)) / 1000)
-
         setRemaining(`${diffHrs}시간 ${diffMins}분 ${diffSecs}초 남음`)
       }
     }
@@ -69,10 +77,11 @@ export default function Home() {
 
       {weather && (
         <div className="flex items-center gap-4 bg-blue-100 p-4 rounded-lg shadow-md w-fit">
-          <img
+          <Image
             src={`https:${weather.current.condition.icon}`}
             alt="날씨"
-            className="w-12 h-12"
+            width={48}
+            height={48}
           />
           <div>
             <p className="text-lg font-semibold">
