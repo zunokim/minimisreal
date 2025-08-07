@@ -1,21 +1,26 @@
-import { cookies } from 'next/headers'
+// src/app/api/login/route.ts
 import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
-  const body = await req.json()
-  const token = body.access_token
+  const body = await req.json().catch(() => null)
+  const token: string | undefined = body?.access_token
 
   if (!token) {
-    return NextResponse.json({ success: false, message: 'No token provided' }, { status: 400 })
+    return NextResponse.json({ error: 'missing access_token' }, { status: 400 })
   }
 
-  // ✅ 토큰을 HTTP-only 쿠키로 저장
-  cookies().set('sb-access-token', token, {
+  // 응답을 만들고, 응답의 cookies에 set
+  const res = NextResponse.json({ ok: true })
+
+  res.cookies.set({
+    name: 'sb-access-token',
+    value: token,
     httpOnly: true,
-    path: '/',
     secure: true,
+    sameSite: 'lax',
+    path: '/',
     maxAge: 60 * 60 * 24 * 7, // 7일
   })
 
-  return NextResponse.json({ success: true })
+  return res
 }

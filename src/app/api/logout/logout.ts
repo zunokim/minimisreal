@@ -1,7 +1,16 @@
-// src/pages/api/logout.ts
-import { NextApiRequest, NextApiResponse } from 'next'
+// src/app/api/logout/route.ts
+import { NextResponse } from 'next/server'
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  res.setHeader('Set-Cookie', 'sb-access-token=; Max-Age=0; Path=/; HttpOnly')
-  res.status(200).json({ message: 'Logged out' })
+export async function POST() {
+  const res = NextResponse.json({ ok: true })
+  res.cookies.set({
+    name: 'sb-access-token',
+    value: '',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0, // 즉시 만료
+  })
+  return res
 }
