@@ -1,7 +1,7 @@
 // src/app/board/[id]/BoardDetailClient.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
@@ -33,7 +33,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
   const [error, setError] = useState<string | null>(null)
 
   const [newComment, setNewComment] = useState('')
-
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentText, setEditingCommentText] = useState('')
 
@@ -41,47 +40,48 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
   const [editingTitle, setEditingTitle] = useState('')
   const [editingContent, setEditingContent] = useState('')
 
-  // 초기 로드: 게시글 + 댓글
-  useEffect(() => {
-    async function load() {
-      try {
-        setLoading(true)
-        setError(null)
+  // 게시글 + 댓글 로드
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
 
-        // 게시글
-        const { data: postData, error: postErr } = await supabase
-          .from('posts')
-          .select('*')
-          .eq('id', postId)
-          .single()
+      // 게시글
+      const { data: postData, error: postErr } = await supabase
+        .from('posts')
+        .select('*')
+        .eq('id', postId)
+        .single()
 
-        if (postErr) throw postErr
-        const typedPost = postData as Post
-        setPost(typedPost)
-        setEditingTitle(typedPost.title)
-        setEditingContent(typedPost.content)
+      if (postErr || !postData) throw new Error(postErr?.message || '게시글을 찾을 수 없습니다.')
 
-        // 댓글
-        const { data: commentData, error: cErr } = await supabase
-          .from('comments')
-          .select('*')
-          .eq('post_id', postId)
-          .order('created_at', { ascending: true })
+      const typedPost = postData as Post
+      setPost(typedPost)
+      setEditingTitle(typedPost.title)
+      setEditingContent(typedPost.content)
 
-        if (cErr) throw cErr
-        setComments((commentData ?? []) as Comment[])
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '데이터를 불러오지 못했습니다.'
-        setError(msg)
-      } finally {
-        setLoading(false)
-      }
+      // 댓글
+      const { data: commentData, error: cErr } = await supabase
+        .from('comments')
+        .select('*')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true })
+
+      if (cErr) throw cErr
+      setComments((commentData ?? []) as Comment[])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '데이터를 불러오지 못했습니다.')
+    } finally {
+      setLoading(false)
     }
-    load()
   }, [postId])
 
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
   // 게시글 삭제
-  const handleDeletePost = async () => {
+  const handleDeletePost = useCallback(async () => {
     if (!confirm('이 게시글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('posts').delete().eq('id', postId)
     if (delErr) {
@@ -89,10 +89,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       return
     }
     router.push('/board')
-  }
+  }, [postId, router])
 
   // 게시글 수정 저장
-  const handleSavePost = async () => {
+  const handleSavePost = useCallback(async () => {
     if (!editingTitle.trim() || !editingContent.trim()) {
       alert('제목과 내용을 입력하세요.')
       return
@@ -109,10 +109,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
 
     setPost((prev) => (prev ? { ...prev, title: editingTitle, content: editingContent } : prev))
     setEditingPost(false)
-  }
+  }, [postId, editingTitle, editingContent])
 
   // 댓글 등록
-  const handleAddComment = async () => {
+  const handleAddComment = useCallback(async () => {
     const text = newComment.trim()
     if (!text) return
 
@@ -134,18 +134,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
 
     setComments((prev) => [...prev, data as Comment])
     setNewComment('')
-  }
+  }, [postId, newComment])
 
-  // 댓글 수정 시작/취소/저장
-  const startEditComment = (c: Comment) => {
-    setEditingCommentId(c.id)
-    setEditingCommentText(c.content)
-  }
-  const cancelEditComment = () => {
-    setEditingCommentId(null)
-    setEditingCommentText('')
-  }
-  const saveEditComment = async () => {
+  // 댓글 수정 저장
+  const saveEditComment = useCallback(async () => {
     if (!editingCommentId) return
     const text = editingCommentText.trim()
     if (!text) {
@@ -166,10 +158,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setComments((prev) => prev.map((c) => (c.id === editingCommentId ? { ...c, content: text } : c)))
     setEditingCommentId(null)
     setEditingCommentText('')
-  }
+  }, [editingCommentId, editingCommentText])
 
   // 댓글 삭제
-  const handleDeleteComment = async (id: string) => {
+  const handleDeleteComment = useCallback(async (id: string) => {
     if (!confirm('이 댓글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('comments').delete().eq('id', id)
     if (delErr) {
@@ -177,7 +169,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       return
     }
     setComments((prev) => prev.filter((c) => c.id !== id))
-  }
+  }, [])
 
   if (loading) return <div className="text-gray-600">불러오는 중...</div>
 
@@ -310,7 +302,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
                       저장
                     </button>
                     <button
-                      onClick={cancelEditComment}
+                      onClick={() => {
+                        setEditingCommentId(null)
+                        setEditingCommentText('')
+                      }}
                       className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
                     >
                       취소
@@ -322,7 +317,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
                   <p className="whitespace-pre-wrap leading-7 mb-2">{c.content}</p>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => startEditComment(c)}
+                      onClick={() => {
+                        setEditingCommentId(c.id)
+                        setEditingCommentText(c.content)
+                      }}
                       className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
                     >
                       수정
