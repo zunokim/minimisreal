@@ -1,4 +1,3 @@
-// src/app/login/success/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -9,21 +8,19 @@ export default function LoginSuccessPage() {
   useEffect(() => {
     let mounted = true
 
+    // 1) 쿠키가 브라우저에 실제로 적용됐는지 확인
     const check = async () => {
       try {
-        const res = await fetch('/api/me', {
-          cache: 'no-store',
-          credentials: 'include', // ✅ 쿠키 포함
-        })
+        const res = await fetch('/api/me', { cache: 'no-store', credentials: 'include' })
         const json = await res.json()
-        if (!mounted) return
-        if (json?.user) {
+        if (mounted && json?.user) {
           setOk(true)
+          // 2) 적용 확인 후 '완전한 페이지 이동' (SPA push X)
           setTimeout(() => {
-            // SPA push 대신 문서 전체 교체로 쿠키/미들웨어 싱크 보장
-            window.location.replace('/')
-          }, 600)
+            window.location.replace('/')   // ✅ 미들웨어와 쿠키 동기화 확실
+          }, 800)
         } else {
+          // 아직 반영 전이면 조금 있다가 재시도
           setTimeout(check, 300)
         }
       } catch {

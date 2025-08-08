@@ -1,15 +1,13 @@
 // src/app/login/page.tsx
 'use client'
 
+// (선택) 정적으로 프리렌더하지 말고 항상 동적 처리
+export const dynamic = 'force-dynamic'
+
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
 export default function LoginPage() {
-  const router = useRouter()
-  const search = useSearchParams()
-  const redirectTo = search.get('redirect') || '/' // 원래 가려던 경로가 있으면 거기로
-
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -25,7 +23,7 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      // 1) Supabase 이메일/비밀번호 로그인
+      // 1) Supabase 로그인
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
         setErrorMsg(error.message)
@@ -37,7 +35,7 @@ export default function LoginPage() {
         return
       }
 
-      // 2) (중요) 클라이언트에도 세션 저장 — getUser()가 쿠키가 아닌 로컬 세션을 참조함
+      // 2) 클라이언트 세션 저장 (브라우저 getUser용)
       const { error: setErr } = await supabase.auth.setSession({
         access_token: session.access_token,
         refresh_token: session.refresh_token,
@@ -47,7 +45,7 @@ export default function LoginPage() {
         return
       }
 
-      // 3) 서버에도 HTTP-only 쿠키로 저장 — 미들웨어가 쿠키로 인증 판단
+      // 3) 서버 쿠키 저장 (미들웨어 인증용)
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -63,9 +61,8 @@ export default function LoginPage() {
         return
       }
 
-      // 4) 바로 메인으로 이동(또는 success 경유). 완전 페이지 전환으로 쿠키/미들 동기화 보장
-      window.location.replace(redirectTo) // 예: '/' 또는 원래 가려던 경로
-      // router.replace(redirectTo) 로 써도 되지만, replace가 더 안전
+      // 4) 완전 페이지 이동으로 쿠키/미들웨어 싱크 보장
+      window.location.replace('/')
     } catch (err) {
       console.error('[login error]', err)
       setErrorMsg('알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
