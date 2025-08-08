@@ -133,34 +133,29 @@ export default function BoardPage() {
           {posts.map((p) => (
             <li key={p.id} className="py-3">
               <Link href={`/board/${p.id}`} className="block rounded px-2 py-2 hover:bg-gray-50">
-                {/* 모바일: 세로 정렬 / 데스크탑: 제목-작성자/날짜 좌우 배치 */}
+                {/* 모바일: 세로 / 데스크탑: 좌우 */}
                 <div className="flex flex-col gap-1 md:flex-row md:items-baseline md:justify-between">
-                  {/* 제목 + (댓글수) */}
                   <h3 className="font-semibold break-words">
                     {p.title}{' '}
                     <span className="text-gray-500 text-sm">({commentCounts[p.id] ?? 0})</span>
                   </h3>
-
-                  {/* 작성자/시간 — 모바일에선 제목 아래로 내려가며 작은 글씨 */}
                   <span className="text-xs text-gray-500 md:text-sm">
                     {p.author ?? '익명'} · {new Date(p.created_at).toLocaleString('ko-KR')}
                   </span>
                 </div>
-
-                {/* 내용 — 항상 아래 줄 */}
                 <p className="text-sm text-gray-700 mt-1 line-clamp-2">{p.content}</p>
               </Link>
             </li>
           ))}
         </ul>
 
-        {/* 페이지네이션 */}
+        {/* 페이지네이션 — 버튼 글자도 유동 폰트 + 줄바꿈 금지 */}
         {totalPages > 1 && (
-          <div className="mt-6 flex items-center justify-center gap-2">
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
             <button
               onClick={goPrev}
               disabled={page === 1}
-              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap"
+              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap text-[clamp(12px,3.5vw,14px)]"
             >
               이전
             </button>
@@ -169,7 +164,7 @@ export default function BoardPage() {
                 key={n}
                 onClick={() => goPage(n)}
                 className={[
-                  'px-3 py-1 rounded border whitespace-nowrap',
+                  'px-3 py-1 rounded border whitespace-nowrap text-[clamp(12px,3.5vw,14px)]',
                   n === page
                     ? 'border-black bg-black text-white'
                     : 'border-gray-300 hover:bg-gray-50',
@@ -181,40 +176,42 @@ export default function BoardPage() {
             <button
               onClick={goNext}
               disabled={page === totalPages}
-              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap"
+              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap text-[clamp(12px,3.5vw,14px)]"
             >
               다음
             </button>
           </div>
         )}
 
-        {/* 하단: 검색 + 새 글 버튼 */}
-        <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex gap-2 w-full md:w-auto">
+        {/* 하단: 검색 + 새 글 — 컨테이너가 좁으면 자동 줄바꿈 + 버튼/입력 폭 대응 */}
+        <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          {/* 좌측: 검색 영역 */}
+          <div className="flex flex-wrap items-center gap-2 w-full">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-              className="flex-1 md:w-64 border rounded px-3 py-2"
+              className="min-w-0 flex-1 border rounded px-3 py-2 text-[clamp(14px,3.5vw,16px)]"
               placeholder="제목/작성자 검색"
             />
             <button
               onClick={onSearch}
-              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
+              className="w-full sm:w-auto px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap text-[clamp(12px,3.5vw,14px)]"
             >
               검색
             </button>
             <button
               onClick={onReset}
-              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
+              className="w-full sm:w-auto px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap text-[clamp(12px,3.5vw,14px)]"
             >
               초기화
             </button>
           </div>
 
+          {/* 우측: 새 글 버튼 */}
           <Link
             href="/board/new"
-            className="px-4 py-2 rounded bg-black text-white hover:bg-gray-800 whitespace-nowrap text-center"
+            className="w-full sm:w-auto px-4 py-2 rounded bg-black text-white hover:bg-gray-800 whitespace-nowrap text-center text-[clamp(12px,3.5vw,14px)]"
           >
             새 글 작성
           </Link>

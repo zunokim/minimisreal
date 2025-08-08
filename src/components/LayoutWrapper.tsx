@@ -4,6 +4,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabaseClient'
 import LogoutButton from '@/components/LogoutButton'
 
 export default function LayoutWrapper({ children }: { children: ReactNode }) {
@@ -11,11 +12,30 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
   const isLoginPage = pathname.startsWith('/login')
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // 로그인 페이지가 아닐 때, 로그인 유저의 profiles 행 보정(없으면 생성)
+  // ✅ 프로필(이름/이메일) — 모바일 사이드바 하단에서 사용
+  const [displayName, setDisplayName] = useState<string>('')
+  const [email, setEmail] = useState<string>('')
+
   useEffect(() => {
-    if (isLoginPage) return
-    fetch('/api/ensure-profile', { cache: 'no-store', credentials: 'include' }).catch(() => {})
-  }, [isLoginPage])
+    const loadProfile = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) {
+        setDisplayName('')
+        setEmail('')
+        return
+      }
+      setEmail(user.email ?? '')
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', user.id)
+        .single()
+      setDisplayName(profile?.display_name || '')
+    }
+    loadProfile()
+  }, [])
 
   // ESC로 닫기
   useEffect(() => {
@@ -42,23 +62,19 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
 
   return (
     <>
-      {/* 고정 헤더 */}
+      {/* 🔒 고정 헤더 */}
       <header className="fixed top-0 left-0 right-0 h-16 bg-white shadow-md border-b z-50">
-        <div className="h-full px-4 md:px-6 flex items-center justify-between">
-          {/* 좌측 타이틀 */}
-          <h1 className="text-lg md:text-xl font-bold">code_31020</h1>
+        <div className="h-full px-4 md:px-6 flex items-center justify-between gap-3">
+          {/* 좌측: 타이틀 */}
+          <h1 className="font-bold truncate text-[clamp(16px,3.5vw,20px)]">Code Name 31020</h1>
 
-          {/* 우측: Profile(필요 시 유지) + Logout + 햄버거 */}
-          <div className="flex items-center gap-3">
-            {/* 필요 없으면 아래 Link 제거해도 됩니다 */}
-            <Link href="/profile" className="hidden md:inline text-sm hover:underline">
-              👤 Profile
-            </Link>
+          {/* 우측: 로그아웃 + 햄버거 */}
+          <div className="flex items-center gap-2">
             <LogoutButton />
             <button
               type="button"
               aria-label="메뉴 열기"
-              className="md:hidden p-2 border rounded hover:bg-gray-50 active:scale-95 transition"
+              className="md:hidden p-2 border rounded hover:bg-gray-50 active:scale-95 transition whitespace-nowrap text-[clamp(12px,3.5vw,14px)]"
               onClick={() => setMenuOpen(true)}
             >
               <span className="block w-5 h-0.5 bg-black mb-1" />
@@ -69,7 +85,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      {/* 헤더 높이 보정 */}
+      {/* 헤더 높이만큼 여백 */}
       <div className="pt-16 flex min-h-screen">
         {/* 좌측 사이드바 — 데스크탑 */}
         <aside className="hidden md:block w-56 bg-gray-100 p-4 border-r">
@@ -78,7 +94,6 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
             <Link href="/board">📝 Board</Link>
             <Link href="/data">📊 Data</Link>
             <Link href="/etc">⚙️ Etc</Link>
-            {/* ⛔️ Profile 링크는 좌측 메뉴에서 제거 */}
           </nav>
         </aside>
 
@@ -88,7 +103,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      {/* 모바일 오버레이 */}
+      {/* 모바일: 오버레이 */}
       {menuOpen && (
         <button
           aria-label="메뉴 닫기"
@@ -97,7 +112,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
         />
       )}
 
-      {/* 모바일 슬라이드 메뉴 */}
+      {/* 모바일: 우측 슬라이드 메뉴 + 하단 프로필 */}
       <aside
         className={[
           'fixed top-16 right-0 h-[calc(100vh-64px)] w-64 bg-white border-l shadow-xl md:hidden z-50',
@@ -110,8 +125,17 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
           <Link href="/board" onClick={() => setMenuOpen(false)}>📝 Board</Link>
           <Link href="/data" onClick={() => setMenuOpen(false)}>📊 Data</Link>
           <Link href="/etc" onClick={() => setMenuOpen(false)}>⚙️ Etc</Link>
-          {/* 모바일 메뉴에서도 Profile 제거 */}
         </nav>
+
+        {/* 📇 프로필(모바일 전용 표기) */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t text-sm text-gray-600 md:hidden">
+          <div className="font-semibold">
+            {displayName || email || '로그인 정보 없음'}
+          </div>
+          {displayName && email && (
+            <div className="text-xs text-gray-500 mt-0.5">{email}</div>
+          )}
+        </div>
       </aside>
     </>
   )
