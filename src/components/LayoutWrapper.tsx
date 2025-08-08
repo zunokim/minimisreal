@@ -46,7 +46,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
       <header className="fixed top-0 left-0 right-0 h-16 bg-white shadow-md border-b z-50">
         <div className="h-full px-4 md:px-6 flex items-center justify-between">
           {/* 좌측 타이틀 */}
-          <h1 className="text-lg md:text-xl font-bold">Code Name 31020</h1>
+          <h1 className="text-lg md:text-xl font-bold">code_31020</h1>
 
           {/* 우측: Profile(필요 시 유지) + Logout + 햄버거 */}
           <div className="flex items-center gap-3">

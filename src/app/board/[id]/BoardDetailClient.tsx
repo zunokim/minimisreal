@@ -51,7 +51,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
         const { data: { user } } = await supabase.auth.getUser()
         setCurrentUserId(user?.id ?? null)
 
-        // 게시글(🔑 user_id 포함)
         const { data: postData, error: postErr } = await supabase
           .from('posts')
           .select('id, title, content, author, created_at, user_id')
@@ -63,7 +62,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
         setEditingTitle((postData as Post).title)
         setEditingContent((postData as Post).content)
 
-        // 댓글(🔑 user_id 포함)
         const { data: commentData, error: cErr } = await supabase
           .from('comments')
           .select('id, post_id, content, author, created_at, user_id')
@@ -93,7 +91,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     return profile?.display_name || '익명'
   }
 
-  // 게시글 삭제 (RLS가 소유자만 허용)
   const handleDeletePost = async () => {
     if (!confirm('이 게시글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('posts').delete().eq('id', postId)
@@ -104,7 +101,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     router.push('/board')
   }
 
-  // 게시글 수정 저장 (RLS가 소유자만 허용)
   const handleSavePost = async () => {
     if (!editingTitle.trim() || !editingContent.trim()) {
       alert('제목과 내용을 입력하세요.')
@@ -122,7 +118,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setEditingPost(false)
   }
 
-  // 댓글 등록 (user_id 포함)
   const handleAddComment = async () => {
     const text = newComment.trim()
     if (!text) return
@@ -147,7 +142,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setNewComment('')
   }
 
-  // 댓글 수정
   const startEditComment = (c: Comment) => {
     setEditingCommentId(c.id)
     setEditingCommentText(c.content)
@@ -176,7 +170,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setEditingCommentText('')
   }
 
-  // 댓글 삭제
   const handleDeleteComment = async (id: string) => {
     if (!confirm('이 댓글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('comments').delete().eq('id', id)
@@ -192,9 +185,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     return (
       <div className="space-y-4">
         <p className="text-red-600">오류: {error ?? '게시글을 찾을 수 없습니다.'}</p>
-        <Link href="/board" className="text-blue-600 underline">
-          목록으로 돌아가기
-        </Link>
+        <Link href="/board" className="text-blue-600 underline">목록으로 돌아가기</Link>
       </div>
     )
   }
@@ -203,13 +194,16 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
 
   return (
     <div className="max-w-3xl">
-      {/* 상단 액션 */}
-      <div className="mb-6 flex items-center gap-3">
-        <Link href="/board" className="text-blue-600 underline">
+      {/* 상단 액션바 */}
+      <div className="mb-6 flex items-center gap-2">
+        {/* ⬅︎ 목록으로 (버튼 스타일) */}
+        <Link
+          href="/board"
+          className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+        >
           ← 목록으로
         </Link>
 
-        {/* ✅ 내 글일 때만 수정/삭제 노출 */}
         {!editingPost ? (
           isOwner && (
             <>
@@ -349,7 +343,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
                   <>
                     <p className="whitespace-pre-wrap leading-7 mb-2">{c.content}</p>
                     <div className="flex gap-2">
-                      {/* ✅ 자기 댓글에만 수정/삭제 노출 */}
                       {mine && (
                         <>
                           <button
