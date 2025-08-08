@@ -71,7 +71,7 @@ export default function Home() {
       <div className="mb-8 space-y-2">
         <p className="text-lg">📅 {date}</p>
         <p className="text-lg">⏰ {time}</p>
-        <p className="text-lg">⏳ 퇴근까지 : {remaining}</p>
+        <p className="text-lg">⏳ 퇴근 : {remaining}</p>
       </div>
 
       {weather && (
