@@ -2,11 +2,14 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
 export default function LoginPage() {
   const router = useRouter()
+  const search = useSearchParams()
+  const redirectTo = search.get('redirect') || '/' // 원래 가려던 경로가 있으면 거기로
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -20,39 +23,51 @@ export default function LoginPage() {
       return
     }
 
+    setLoading(true)
     try {
-      setLoading(true)
-
-      // 1) Supabase로 이메일/비밀번호 로그인
+      // 1) Supabase 이메일/비밀번호 로그인
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
         setErrorMsg(error.message)
         return
       }
-
-      const access_token = data.session?.access_token
-      const refresh_token = data.session?.refresh_token
-      if (!access_token || !refresh_token) {
-        setErrorMsg('세션 토큰을 받지 못했습니다. 다시 시도해 주세요.')
+      const session = data.session
+      if (!session) {
+        setErrorMsg('세션 정보를 받지 못했습니다. 다시 시도해 주세요.')
         return
       }
 
-      // 2) 서버에 HTTP-only 쿠키로 저장
+      // 2) (중요) 클라이언트에도 세션 저장 — getUser()가 쿠키가 아닌 로컬 세션을 참조함
+      const { error: setErr } = await supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      })
+      if (setErr) {
+        setErrorMsg('클라이언트 세션 저장 실패: ' + setErr.message)
+        return
+      }
+
+      // 3) 서버에도 HTTP-only 쿠키로 저장 — 미들웨어가 쿠키로 인증 판단
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_token, refresh_token }),
+        body: JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        }),
+        credentials: 'include', // ✅ 쿠키 저장 보장
       })
-
       if (!res.ok) {
         const text = await res.text().catch(() => '')
-        setErrorMsg(`세션 저장 실패: ${text || res.statusText}`)
+        setErrorMsg(`서버 세션 저장 실패: ${text || res.statusText}`)
         return
       }
 
-      // 3) 성공 페이지로 이동 (거기서 2초 뒤 홈으로 이동)
-      router.push('/login/success')
+      // 4) 바로 메인으로 이동(또는 success 경유). 완전 페이지 전환으로 쿠키/미들 동기화 보장
+      window.location.replace(redirectTo) // 예: '/' 또는 원래 가려던 경로
+      // router.replace(redirectTo) 로 써도 되지만, replace가 더 안전
     } catch (err) {
+      console.error('[login error]', err)
       setErrorMsg('알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.')
     } finally {
       setLoading(false)
@@ -61,23 +76,18 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      {/* 카드 */}
       <div className="w-full max-w-sm bg-white p-8 rounded-xl shadow-md">
         <h1 className="text-2xl font-bold text-center mb-6">로그인</h1>
 
-        {/* 오류 메시지 */}
         {errorMsg && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {errorMsg}
           </div>
         )}
 
-        {/* 로그인 폼 */}
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label className="sr-only" htmlFor="email">
-              이메일
-            </label>
+            <label className="sr-only" htmlFor="email">이메일</label>
             <input
               id="email"
               type="email"
@@ -91,9 +101,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="sr-only" htmlFor="password">
-              비밀번호
-            </label>
+            <label className="sr-only" htmlFor="password">비밀번호</label>
             <input
               id="password"
               type="password"

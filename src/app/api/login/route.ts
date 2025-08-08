@@ -1,38 +1,45 @@
 import { NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null)
-  const access = body?.access_token as string | undefined
-  const refresh = body?.refresh_token as string | undefined
+  const access_token = body?.access_token as string | undefined
+  const refresh_token = body?.refresh_token as string | undefined
 
-  if (!access || !refresh) {
+  if (!access_token || !refresh_token) {
     return NextResponse.json({ error: 'missing tokens' }, { status: 400 })
   }
 
-  const isProd = process.env.NODE_ENV === 'production'
+  // 응답 객체(여기에 setSession이 심을 Set-Cookie를 담아 보냄)
   const res = NextResponse.json({ ok: true })
+  const cookieStore = await cookies()
 
-  // access 토큰 (유효기간 짧음)
-  res.cookies.set({
-    name: 'sb-access-token',
-    value: access,
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: isProd,     // Vercel(HTTPS)에서는 true, 로컬 HTTP에선 false
-    path: '/',
-    maxAge: 60 * 60 * 24 * 7, // 7일
+  // SSR 서버 클라이언트 (쿠키 읽기/쓰기 연결)
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            res.cookies.set(name, value, options)
+          })
+        },
+      },
+    }
+  )
+
+  // ✅ 서버에서 세션을 “정식으로” 세팅 → 쿠키를 올바른 형식/옵션으로 굽는다
+  const { error } = await supabase.auth.setSession({
+    access_token,
+    refresh_token,
   })
 
-  // refresh 토큰 (유효기간 김)
-  res.cookies.set({
-    name: 'sb-refresh-token',
-    value: refresh,
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: isProd,
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30, // 30일
-  })
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 })
+  }
 
   return res
 }
