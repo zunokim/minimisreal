@@ -1,3 +1,4 @@
+// src/app/board/page.tsx
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -29,11 +30,9 @@ export default function BoardPage() {
   // 댓글 수 집계
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
-    [total]
-  )
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total])
 
+  // 현재 페이지의 글들만 댓글 수 집계
   const fetchCommentCounts = async (postIds: string[]) => {
     if (postIds.length === 0) {
       setCommentCounts({})
@@ -53,38 +52,34 @@ export default function BoardPage() {
     setCommentCounts(map)
   }
 
+  // 목록 + 전체수 + 댓글수
   useEffect(() => {
     const run = async () => {
       setLoading(true)
       setError(null)
       try {
-        let countReq = supabase
-          .from('posts')
-          .select('id', { count: 'exact', head: true })
-
+        // total
+        let countReq = supabase.from('posts').select('id', { count: 'exact', head: true })
         if (query.trim()) {
           const kw = query.trim()
           countReq = countReq.or(`title.ilike.%${kw}%,author.ilike.%${kw}%`)
         }
-
         const { count, error: countErr } = await countReq
         if (countErr) throw countErr
         setTotal(count ?? 0)
 
+        // page data
         const from = (page - 1) * PAGE_SIZE
         const to = from + PAGE_SIZE - 1
-
         let dataReq = supabase
           .from('posts')
           .select('id, title, content, author, created_at, user_id')
           .order('created_at', { ascending: false })
           .range(from, to)
-
         if (query.trim()) {
           const kw = query.trim()
           dataReq = dataReq.or(`title.ilike.%${kw}%,author.ilike.%${kw}%`)
         }
-
         const { data, error: dataErr } = await dataReq
         if (dataErr) throw dataErr
 
@@ -101,6 +96,7 @@ export default function BoardPage() {
     run()
   }, [page, query])
 
+  // 검색
   const onSearch = () => {
     setPage(1)
     setQuery(q)
@@ -112,18 +108,17 @@ export default function BoardPage() {
   }
 
   // 페이지네이션
-  const totalPagesComputed = totalPages
   const goPrev = () => setPage((p) => Math.max(1, p - 1))
-  const goNext = () => setPage((p) => Math.min(totalPagesComputed, p + 1))
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1))
   const goPage = (p: number) => setPage(p)
 
   const pageNumbers = useMemo(() => {
     const arr: number[] = []
     const start = Math.max(1, page - 2)
-    const end = Math.min(totalPagesComputed, start + 4)
+    const end = Math.min(totalPages, start + 4)
     for (let i = start; i <= end; i++) arr.push(i)
     return arr
-  }, [page, totalPagesComputed])
+  }, [page, totalPages])
 
   return (
     <div className="max-w-4xl">
@@ -132,38 +127,40 @@ export default function BoardPage() {
 
         {loading && <div className="text-gray-600">불러오는 중…</div>}
         {error && <div className="text-red-600 mb-2">오류: {error}</div>}
-        {!loading && posts.length === 0 && (
-          <div className="text-gray-500">게시글이 없습니다.</div>
-        )}
+        {!loading && posts.length === 0 && <div className="text-gray-500">게시글이 없습니다.</div>}
 
         <ul className="divide-y">
           {posts.map((p) => (
             <li key={p.id} className="py-3">
-              <Link href={`/board/${p.id}`} className="block hover:bg-gray-50 rounded px-2 py-2">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-semibold">
+              <Link href={`/board/${p.id}`} className="block rounded px-2 py-2 hover:bg-gray-50">
+                {/* 모바일: 세로 정렬 / 데스크탑: 제목-작성자/날짜 좌우 배치 */}
+                <div className="flex flex-col gap-1 md:flex-row md:items-baseline md:justify-between">
+                  {/* 제목 + (댓글수) */}
+                  <h3 className="font-semibold break-words">
                     {p.title}{' '}
-                    <span className="text-gray-500 text-sm">
-                      ({commentCounts[p.id] ?? 0})
-                    </span>
+                    <span className="text-gray-500 text-sm">({commentCounts[p.id] ?? 0})</span>
                   </h3>
-                  <span className="text-sm text-gray-500">
+
+                  {/* 작성자/시간 — 모바일에선 제목 아래로 내려가며 작은 글씨 */}
+                  <span className="text-xs text-gray-500 md:text-sm">
                     {p.author ?? '익명'} · {new Date(p.created_at).toLocaleString('ko-KR')}
                   </span>
                 </div>
-                <p className="text-sm text-gray-600 line-clamp-2 mt-1">{p.content}</p>
+
+                {/* 내용 — 항상 아래 줄 */}
+                <p className="text-sm text-gray-700 mt-1 line-clamp-2">{p.content}</p>
               </Link>
             </li>
           ))}
         </ul>
 
         {/* 페이지네이션 */}
-        {totalPagesComputed > 1 && (
+        {totalPages > 1 && (
           <div className="mt-6 flex items-center justify-center gap-2">
             <button
               onClick={goPrev}
               disabled={page === 1}
-              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50"
+              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap"
             >
               이전
             </button>
@@ -172,7 +169,7 @@ export default function BoardPage() {
                 key={n}
                 onClick={() => goPage(n)}
                 className={[
-                  'px-3 py-1 rounded border',
+                  'px-3 py-1 rounded border whitespace-nowrap',
                   n === page
                     ? 'border-black bg-black text-white'
                     : 'border-gray-300 hover:bg-gray-50',
@@ -183,40 +180,41 @@ export default function BoardPage() {
             ))}
             <button
               onClick={goNext}
-              disabled={page === totalPagesComputed}
-              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50"
+              disabled={page === totalPages}
+              className="px-3 py-1 rounded border border-gray-300 disabled:opacity-50 hover:bg-gray-50 whitespace-nowrap"
             >
               다음
             </button>
           </div>
         )}
 
-        {/* 🔍 검색 & 새 글 작성 버튼 (하단 배치) */}
+        {/* 하단: 검색 + 새 글 버튼 */}
         <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex gap-2">
+          <div className="flex gap-2 w-full md:w-auto">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-              className="w-48 md:w-64 border rounded px-3 py-2"
+              className="flex-1 md:w-64 border rounded px-3 py-2"
               placeholder="제목/작성자 검색"
             />
             <button
               onClick={onSearch}
-              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50"
+              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
             >
               검색
             </button>
             <button
               onClick={onReset}
-              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50"
+              className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
             >
               초기화
             </button>
           </div>
+
           <Link
             href="/board/new"
-            className="px-4 py-2 rounded bg-black text-white hover:bg-gray-800"
+            className="px-4 py-2 rounded bg-black text-white hover:bg-gray-800 whitespace-nowrap text-center"
           >
             새 글 작성
           </Link>
