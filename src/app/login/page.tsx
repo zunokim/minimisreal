@@ -73,8 +73,8 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="w-full max-w-sm bg-white p-8 rounded-xl shadow-md">
-        <h1 className="text-2xl font-bold text-center mb-6">로그인</h1>
+      <div className="w-full max-w-sm bg-white p-14 rounded-xl shadow-md">
+        <h1 className="text-2xl font-bold text-center mb-6"> 경영관리 비밀연구소 </h1>
 
         {errorMsg && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

@@ -1,27 +1,27 @@
 // src/app/board/[id]/BoardDetailClient.tsx
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
-// 게시글 타입
 type Post = {
   id: string
   title: string
   content: string
   author: string | null
   created_at: string
+  user_id: string | null
 }
 
-// 댓글 타입
 type Comment = {
   id: string
   post_id: string
   content: string
   author: string | null
   created_at: string
+  user_id: string | null
 }
 
 export default function BoardDetailClient({ postId }: { postId: string }) {
@@ -40,48 +40,61 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
   const [editingTitle, setEditingTitle] = useState('')
   const [editingContent, setEditingContent] = useState('')
 
-  // 게시글 + 댓글 로드
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      // 게시글
-      const { data: postData, error: postErr } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('id', postId)
-        .single()
-
-      if (postErr || !postData) throw new Error(postErr?.message || '게시글을 찾을 수 없습니다.')
-
-      const typedPost = postData as Post
-      setPost(typedPost)
-      setEditingTitle(typedPost.title)
-      setEditingContent(typedPost.content)
-
-      // 댓글
-      const { data: commentData, error: cErr } = await supabase
-        .from('comments')
-        .select('*')
-        .eq('post_id', postId)
-        .order('created_at', { ascending: true })
-
-      if (cErr) throw cErr
-      setComments((commentData ?? []) as Comment[])
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '데이터를 불러오지 못했습니다.')
-    } finally {
-      setLoading(false)
-    }
-  }, [postId])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    const init = async () => {
+      try {
+        setLoading(true)
+        setError(null)
 
-  // 게시글 삭제
-  const handleDeletePost = useCallback(async () => {
+        const { data: { user } } = await supabase.auth.getUser()
+        setCurrentUserId(user?.id ?? null)
+
+        // 게시글(🔑 user_id 포함)
+        const { data: postData, error: postErr } = await supabase
+          .from('posts')
+          .select('id, title, content, author, created_at, user_id')
+          .eq('id', postId)
+          .single()
+        if (postErr) throw postErr
+
+        setPost(postData as Post)
+        setEditingTitle((postData as Post).title)
+        setEditingContent((postData as Post).content)
+
+        // 댓글(🔑 user_id 포함)
+        const { data: commentData, error: cErr } = await supabase
+          .from('comments')
+          .select('id, post_id, content, author, created_at, user_id')
+          .eq('post_id', postId)
+          .order('created_at', { ascending: true })
+        if (cErr) throw cErr
+
+        setComments((commentData ?? []) as Comment[])
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '데이터를 불러오지 못했습니다.'
+        setError(msg)
+      } finally {
+        setLoading(false)
+      }
+    }
+    init()
+  }, [postId])
+
+  const getDisplayName = async (): Promise<string> => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) return '익명'
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('id', user.id)
+      .single()
+    return profile?.display_name || '익명'
+  }
+
+  // 게시글 삭제 (RLS가 소유자만 허용)
+  const handleDeletePost = async () => {
     if (!confirm('이 게시글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('posts').delete().eq('id', postId)
     if (delErr) {
@@ -89,10 +102,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       return
     }
     router.push('/board')
-  }, [postId, router])
+  }
 
-  // 게시글 수정 저장
-  const handleSavePost = useCallback(async () => {
+  // 게시글 수정 저장 (RLS가 소유자만 허용)
+  const handleSavePost = async () => {
     if (!editingTitle.trim() || !editingContent.trim()) {
       alert('제목과 내용을 입력하세요.')
       return
@@ -101,67 +114,70 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       .from('posts')
       .update({ title: editingTitle, content: editingContent })
       .eq('id', postId)
-
     if (upErr) {
       alert(`수정 실패: ${upErr.message}`)
       return
     }
-
     setPost((prev) => (prev ? { ...prev, title: editingTitle, content: editingContent } : prev))
     setEditingPost(false)
-  }, [postId, editingTitle, editingContent])
+  }
 
-  // 댓글 등록
-  const handleAddComment = useCallback(async () => {
+  // 댓글 등록 (user_id 포함)
+  const handleAddComment = async () => {
     const text = newComment.trim()
     if (!text) return
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    const author = user?.email ?? '익명'
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user?.id) {
+      alert('로그인이 필요합니다.')
+      return
+    }
+    const author = await getDisplayName()
 
     const { data, error: insErr } = await supabase
       .from('comments')
-      .insert({ post_id: postId, content: text, author })
-      .select('*')
+      .insert({ post_id: postId, content: text, author, user_id: user.id })
+      .select('id, post_id, content, author, created_at, user_id')
       .single()
-
     if (insErr) {
       alert(`댓글 등록 실패: ${insErr.message}`)
       return
     }
-
     setComments((prev) => [...prev, data as Comment])
     setNewComment('')
-  }, [postId, newComment])
+  }
 
-  // 댓글 수정 저장
-  const saveEditComment = useCallback(async () => {
+  // 댓글 수정
+  const startEditComment = (c: Comment) => {
+    setEditingCommentId(c.id)
+    setEditingCommentText(c.content)
+  }
+  const cancelEditComment = () => {
+    setEditingCommentId(null)
+    setEditingCommentText('')
+  }
+  const saveEditComment = async () => {
     if (!editingCommentId) return
     const text = editingCommentText.trim()
     if (!text) {
       alert('내용을 입력하세요.')
       return
     }
-
     const { error: upErr } = await supabase
       .from('comments')
       .update({ content: text })
       .eq('id', editingCommentId)
-
     if (upErr) {
       alert(`댓글 수정 실패: ${upErr.message}`)
       return
     }
-
     setComments((prev) => prev.map((c) => (c.id === editingCommentId ? { ...c, content: text } : c)))
     setEditingCommentId(null)
     setEditingCommentText('')
-  }, [editingCommentId, editingCommentText])
+  }
 
   // 댓글 삭제
-  const handleDeleteComment = useCallback(async (id: string) => {
+  const handleDeleteComment = async (id: string) => {
     if (!confirm('이 댓글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('comments').delete().eq('id', id)
     if (delErr) {
@@ -169,10 +185,9 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       return
     }
     setComments((prev) => prev.filter((c) => c.id !== id))
-  }, [])
+  }
 
   if (loading) return <div className="text-gray-600">불러오는 중...</div>
-
   if (error || !post) {
     return (
       <div className="space-y-4">
@@ -184,6 +199,8 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     )
   }
 
+  const isOwner = currentUserId && post.user_id === currentUserId
+
   return (
     <div className="max-w-3xl">
       {/* 상단 액션 */}
@@ -192,74 +209,86 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
           ← 목록으로
         </Link>
 
+        {/* ✅ 내 글일 때만 수정/삭제 노출 */}
         {!editingPost ? (
-          <>
-            <button
-              onClick={() => setEditingPost(true)}
-              className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
-            >
-              게시글 수정
-            </button>
-            <button
-              onClick={handleDeletePost}
-              className="px-3 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50"
-            >
-              게시글 삭제
-            </button>
-          </>
+          isOwner && (
+            <>
+              <button
+                onClick={() => setEditingPost(true)}
+                className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+              >
+                게시글 수정
+              </button>
+              <button
+                onClick={handleDeletePost}
+                className="px-3 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50"
+              >
+                게시글 삭제
+              </button>
+            </>
+          )
         ) : (
-          <>
-            <button
-              onClick={handleSavePost}
-              className="px-3 py-1 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-            >
-              수정 저장
-            </button>
-            <button
-              onClick={() => {
-                setEditingPost(false)
-                setEditingTitle(post.title)
-                setEditingContent(post.content)
-              }}
-              className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
-            >
-              취소
-            </button>
-          </>
+          isOwner && (
+            <>
+              <button
+                onClick={handleSavePost}
+                className="px-3 py-1 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              >
+                수정 저장
+              </button>
+              <button
+                onClick={() => {
+                  setEditingPost(false)
+                  setEditingTitle(post.title)
+                  setEditingContent(post.content)
+                }}
+                className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+              >
+                취소
+              </button>
+            </>
+          )
         )}
       </div>
 
       {/* 게시글 */}
-      {!editingPost ? (
-        <article className="bg-white p-6 rounded-xl shadow border">
-          <h1 className="text-2xl font-bold mb-2">{post.title}</h1>
-          <p className="text-sm text-gray-500 mb-4">
-            작성자: {post.author ?? '익명'} · {new Date(post.created_at).toLocaleString('ko-KR')}
-          </p>
+      <article className="bg-white p-6 rounded-xl shadow border">
+        <h1 className="text-2xl font-bold mb-2">{post.title}</h1>
+        <p className="text-sm text-gray-500 mb-4">
+          작성자: {post.author ?? '익명'} · {new Date(post.created_at).toLocaleString('ko-KR')}
+          {isOwner && (
+            <span className="ml-2 inline-block rounded bg-emerald-50 px-2 py-0.5 text-emerald-700 border border-emerald-200">
+              내 글
+            </span>
+          )}
+        </p>
+        {!editingPost ? (
           <div className="whitespace-pre-wrap leading-7">{post.content}</div>
-        </article>
-      ) : (
-        <div className="bg-white p-6 rounded-xl shadow border">
-          <div className="mb-3">
-            <label className="block text-sm mb-1">제목</label>
-            <input
-              value={editingTitle}
-              onChange={(e) => setEditingTitle(e.target.value)}
-              className="w-full border rounded px-3 py-2"
-              placeholder="제목을 입력하세요"
-            />
-          </div>
-          <div className="mb-3">
-            <label className="block text-sm mb-1">내용</label>
-            <textarea
-              value={editingContent}
-              onChange={(e) => setEditingContent(e.target.value)}
-              className="w-full border rounded px-3 py-2 h-48"
-              placeholder="내용을 입력하세요"
-            />
-          </div>
-        </div>
-      )}
+        ) : (
+          isOwner && (
+            <div>
+              <div className="mb-3">
+                <label className="block text-sm mb-1">제목</label>
+                <input
+                  value={editingTitle}
+                  onChange={(e) => setEditingTitle(e.target.value)}
+                  className="w-full border rounded px-3 py-2"
+                  placeholder="제목을 입력하세요"
+                />
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm mb-1">내용</label>
+                <textarea
+                  value={editingContent}
+                  onChange={(e) => setEditingContent(e.target.value)}
+                  className="w-full border rounded px-3 py-2 h-48"
+                  placeholder="내용을 입력하세요"
+                />
+              </div>
+            </div>
+          )
+        )}
+      </article>
 
       {/* 댓글 */}
       <section className="mt-8">
@@ -281,61 +310,68 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
         </div>
 
         <ul className="space-y-4">
-          {comments.map((c) => (
-            <li key={c.id} className="bg-white p-4 rounded border">
-              <div className="text-sm text-gray-500 mb-2">
-                {c.author ?? '익명'} · {new Date(c.created_at).toLocaleString('ko-KR')}
-              </div>
+          {comments.map((c) => {
+            const mine = currentUserId && c.user_id === currentUserId
+            return (
+              <li key={c.id} className="bg-white p-4 rounded border">
+                <div className="text-sm text-gray-500 mb-2">
+                  {c.author ?? '익명'} · {new Date(c.created_at).toLocaleString('ko-KR')}
+                  {mine && (
+                    <span className="ml-2 inline-block rounded bg-emerald-50 px-2 py-0.5 text-emerald-700 border border-emerald-200">
+                      내 댓글
+                    </span>
+                  )}
+                </div>
 
-              {editingCommentId === c.id ? (
-                <>
-                  <textarea
-                    value={editingCommentText}
-                    onChange={(e) => setEditingCommentText(e.target.value)}
-                    className="w-full border rounded px-3 py-2 mb-2"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveEditComment}
-                      className="px-3 py-1 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                    >
-                      저장
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingCommentId(null)
-                        setEditingCommentText('')
-                      }}
-                      className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
-                    >
-                      취소
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="whitespace-pre-wrap leading-7 mb-2">{c.content}</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingCommentId(c.id)
-                        setEditingCommentText(c.content)
-                      }}
-                      className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
-                    >
-                      수정
-                    </button>
-                    <button
-                      onClick={() => handleDeleteComment(c.id)}
-                      className="px-3 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50"
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </>
-              )}
-            </li>
-          ))}
+                {editingCommentId === c.id ? (
+                  <>
+                    <textarea
+                      value={editingCommentText}
+                      onChange={(e) => setEditingCommentText(e.target.value)}
+                      className="w-full border rounded px-3 py-2 mb-2"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveEditComment}
+                        className="px-3 py-1 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                      >
+                        저장
+                      </button>
+                      <button
+                        onClick={cancelEditComment}
+                        className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="whitespace-pre-wrap leading-7 mb-2">{c.content}</p>
+                    <div className="flex gap-2">
+                      {/* ✅ 자기 댓글에만 수정/삭제 노출 */}
+                      {mine && (
+                        <>
+                          <button
+                            onClick={() => startEditComment(c)}
+                            className="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50"
+                          >
+                            수정
+                          </button>
+                          <button
+                            onClick={() => handleDeleteComment(c.id)}
+                            className="px-3 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50"
+                          >
+                            삭제
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </li>
+            )
+          })}
         </ul>
       </section>
     </div>
