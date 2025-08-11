@@ -52,12 +52,12 @@ function rowsToCsv(rows: Row[]): string {
   return lines.join('\r\n')
 }
 
-export async function GET(
-  req: Request,
-  { params }: { params: { dataset: string } } // ✅ 필수값으로 타입 지정
-) {
+export async function GET(req: Request, { params }) {
   try {
-    const datasetParam = params.dataset
+    const datasetParam = params?.dataset as string | undefined
+    if (!datasetParam) {
+      return NextResponse.json({ ok: false, error: 'Missing dataset' }, { status: 400 })
+    }
     const dataset = datasetParam as DatasetKey
     if (!DATASETS[dataset]) {
       return NextResponse.json({ ok: false, error: 'Unknown dataset' }, { status: 400 })
