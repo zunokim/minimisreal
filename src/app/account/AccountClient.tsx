@@ -154,7 +154,7 @@ export default function AccountClient() {
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="예) 홍길동"
           />
-          <p className="text-xs text-gray-500">헤더 및 모바일 메뉴에 표시됩니다.</p>
+          <p className="text-xs text-gray-500">이름을 입력해주세요.</p>
         </div>
 
         <div className="flex gap-2">
