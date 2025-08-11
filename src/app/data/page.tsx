@@ -1,8 +1,8 @@
-// ✅ src/app/data/page.tsx
+// src/app/data/page.tsx
+import DataClient from './DataClient'
+
+export const dynamic = 'force-dynamic'
+
 export default function DataPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold">📊 Data 페이지입니다.</h2>
-    </div>
-  )
+  return <DataClient />
 }
