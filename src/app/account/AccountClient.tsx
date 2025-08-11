@@ -5,6 +5,16 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
+function getErrMsg(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'string') return e
+  try {
+    return JSON.stringify(e)
+  } catch {
+    return 'Unknown error'
+  }
+}
+
 export default function AccountClient() {
   const router = useRouter()
 
@@ -57,7 +67,7 @@ export default function AccountClient() {
     load()
   }, [router])
 
-  const saveDisplayName = async (e: React.FormEvent) => {
+  const saveDisplayName = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setOkMsg(null)
     setError(null)
@@ -72,14 +82,14 @@ export default function AccountClient() {
       setOkMsg('이름이 변경되었습니다.')
       // 헤더 즉시 반영
       window.dispatchEvent(new CustomEvent('profile-updated', { detail: { displayName } }))
-    } catch (err: any) {
-      setError(err.message || '이름 변경에 실패했습니다.')
+    } catch (err: unknown) {
+      setError(getErrMsg(err) || '이름 변경에 실패했습니다.')
     } finally {
       setSavingName(false)
     }
   }
 
-  const savePassword = async (e: React.FormEvent) => {
+  const savePassword = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setOkMsg(null)
     setError(null)
@@ -102,8 +112,8 @@ export default function AccountClient() {
       setNewPw('')
       setNewPw2('')
       setOkMsg('비밀번호가 변경되었습니다. 다음 로그인부터 새 비밀번호를 사용하세요.')
-    } catch (err: any) {
-      setError(err.message || '비밀번호 변경에 실패했습니다.')
+    } catch (err: unknown) {
+      setError(getErrMsg(err) || '비밀번호 변경에 실패했습니다.')
     } finally {
       setSavingPw(false)
     }
@@ -144,7 +154,7 @@ export default function AccountClient() {
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="예) 홍길동"
           />
-          <p className="text-xs text-gray-500">본명을 입력해주세요</p>
+          <p className="text-xs text-gray-500">헤더 및 모바일 메뉴에 표시됩니다.</p>
         </div>
 
         <div className="flex gap-2">

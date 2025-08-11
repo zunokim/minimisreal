@@ -23,6 +23,10 @@ export default function Home() {
     { name: 'Circle', url: 'https://hisc.circle.hanwha.com/' },
     { name: '외부메일', url: 'https://mail.hanwhawm.com/' },
     { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
+    { name: 'Chatgpt', url: 'https://chatgpt.com/' },
+    { name: 'DART', url: 'http://dart.fss.or.kr/' },
+    { name: '채널H', url: 'https://chhplus.hanwha.com/' },
+    { name: '금융보안원', url: 'https://edu.fsec.or.kr/' },
   ]
 
   useEffect(() => {
@@ -66,7 +70,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-white p-8">
-      <h1 className="text-3xl font-bold mb-8">하싫핑 하하방</h1>
+      <h1 className="text-3xl font-bold mb-8">" 하싫핑 하하방 "</h1>
 
       <div className="mb-8 space-y-2">
         <p className="text-lg">📅 {date}</p>
@@ -93,7 +97,7 @@ export default function Home() {
 
       {/* 🔗 관련 사이트 */}
       <section className="bg-white p-6 rounded-xl shadow border max-w-xl">
-        <h2 className="text-xl font-bold mb-4">바로가기</h2>
+        <h2 className="text-xl font-bold mb-4">사이트 바로가기</h2>
         <ul className="space-y-2 list-disc list-inside">
           {links.map((l) => (
             <li key={l.url}>
