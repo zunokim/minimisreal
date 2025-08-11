@@ -19,10 +19,7 @@ type Row = {
 function toCsvValue(v: unknown): string {
   if (v === null || v === undefined) return ''
   const s = String(v)
-  // 따옴표/줄바꿈/쉼표 포함 시 CSV 안전하게 감싸기
-  if (/[",\r\n]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`
-  }
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
 }
 
@@ -56,22 +53,18 @@ function rowsToCsv(rows: Row[]): string {
 }
 
 export async function GET(
-  _req: Request,
-  ctx: { params: { dataset?: string } }
+  req: Request,
+  { params }: { params: { dataset: string } } // ✅ 필수값으로 타입 지정
 ) {
   try {
-    const datasetParam = ctx.params.dataset
-    if (!datasetParam) {
-      return NextResponse.json({ ok: false, error: 'Missing dataset' }, { status: 400 })
-    }
+    const datasetParam = params.dataset
     const dataset = datasetParam as DatasetKey
     if (!DATASETS[dataset]) {
       return NextResponse.json({ ok: false, error: 'Unknown dataset' }, { status: 400 })
     }
     const table = pickTable(dataset)
 
-    // 쿼리 파라미터 파싱
-    const url = new URL(_req.url)
+    const url = new URL(req.url)
     const start = url.searchParams.get('start') // 예: 202301
     const end = url.searchParams.get('end')     // 예: 202512
     const region = url.searchParams.get('region') // region_code
@@ -79,14 +72,16 @@ export async function GET(
 
     let query = supabaseAdmin
       .from<Row>(table)
-      .select('prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value', { head: false })
+      .select(
+        'prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value',
+        { head: false }
+      )
 
     if (start) query = query.gte('prd_de', start)
     if (end) query = query.lte('prd_de', end)
     if (region && region !== 'ALL') query = query.eq('region_code', region)
     if (itm && itm !== 'ALL') query = query.eq('itm_id', itm)
 
-    // 정렬: 시점 오름차순, 지역/항목 보조 정렬
     query = query.order('prd_de', { ascending: true }).order('region_code', { ascending: true })
 
     const { data, error } = await query
@@ -102,8 +97,6 @@ export async function GET(
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filename}"`,
-        // Excel이 UTF-8 BOM 없으면 한글 깨질 수 있어요. 필요시 아래와 같이 BOM을 앞에 붙이는 것도 가능:
-        // 'Content-Type': 'application/octet-stream',
       },
     })
   } catch (e) {
