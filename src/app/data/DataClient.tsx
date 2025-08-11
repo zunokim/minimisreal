@@ -73,10 +73,11 @@ export default function DataClient() {
 
       // region 옵션(코드/이름)
       const { data: regionData } = await supabase
-        .from<RegionRow>(table)
+        .from(table)
         .select('region_code, region_name', { head: false })
         .not('region_code', 'is', null)
         .limit(1_000)
+        .returns<RegionRow[]>()
 
       const regionMap = new Map<string, string | null>()
       for (const r of regionData ?? []) {
@@ -91,10 +92,11 @@ export default function DataClient() {
 
       // itm 옵션
       const { data: itmData } = await supabase
-        .from<ItmRow>(table)
+        .from(table)
         .select('itm_id, itm_name', { head: false })
         .not('itm_id', 'is', null)
         .limit(1_000)
+        .returns<ItmRow[]>()
 
       const itmMap = new Map<string, string | null>()
       for (const r of itmData ?? []) {
@@ -126,7 +128,7 @@ export default function DataClient() {
     setRows([])
 
     let query = supabase
-      .from<DataRow>(tableName)
+      .from(tableName)
       .select(
         'prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value',
         { head: false }
@@ -139,7 +141,7 @@ export default function DataClient() {
 
     query = query.order('prd_de', { ascending: false }).order('region_code', { ascending: true })
 
-    const { data, error: err } = await query
+    const { data, error: err } = await query.returns<DataRow[]>()
     if (err) {
       setError(err.message)
     } else {
