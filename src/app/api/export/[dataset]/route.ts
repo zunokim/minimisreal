@@ -52,19 +52,26 @@ function rowsToCsv(rows: Row[]): string {
   return lines.join('\r\n')
 }
 
-export async function GET(req: Request, { params }) {
+// ✅ 2번째 인자( context ) 사용하지 않고 URL에서 dataset 직접 추출
+export async function GET(req: Request) {
   try {
-    const datasetParam = params?.dataset as string | undefined
+    const url = new URL(req.url)
+
+    // /api/export/<dataset> 에서 <dataset> 뽑기
+    const match = url.pathname.match(/\/api\/export\/([^/]+)\/?$/)
+    const datasetParam = match?.[1]
     if (!datasetParam) {
       return NextResponse.json({ ok: false, error: 'Missing dataset' }, { status: 400 })
     }
+
     const dataset = datasetParam as DatasetKey
     if (!DATASETS[dataset]) {
       return NextResponse.json({ ok: false, error: 'Unknown dataset' }, { status: 400 })
     }
+
     const table = pickTable(dataset)
 
-    const url = new URL(req.url)
+    // 쿼리 파라미터
     const start = url.searchParams.get('start') // 예: 202301
     const end = url.searchParams.get('end')     // 예: 202512
     const region = url.searchParams.get('region') // region_code
@@ -82,7 +89,9 @@ export async function GET(req: Request, { params }) {
     if (region && region !== 'ALL') query = query.eq('region_code', region)
     if (itm && itm !== 'ALL') query = query.eq('itm_id', itm)
 
-    query = query.order('prd_de', { ascending: true }).order('region_code', { ascending: true })
+    query = query
+      .order('prd_de', { ascending: true })
+      .order('region_code', { ascending: true })
 
     const { data, error } = await query
     if (error) {
