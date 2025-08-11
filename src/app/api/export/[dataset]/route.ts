@@ -52,12 +52,10 @@ function rowsToCsv(rows: Row[]): string {
   return lines.join('\r\n')
 }
 
-// ✅ 2번째 인자( context ) 사용하지 않고 URL에서 dataset 직접 추출
+// URL에서 dataset 추출 (context 인자 사용 안 함)
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url)
-
-    // /api/export/<dataset> 에서 <dataset> 뽑기
     const match = url.pathname.match(/\/api\/export\/([^/]+)\/?$/)
     const datasetParam = match?.[1]
     if (!datasetParam) {
@@ -77,8 +75,9 @@ export async function GET(req: Request) {
     const region = url.searchParams.get('region') // region_code
     const itm = url.searchParams.get('itm')       // itm_id
 
+    // ✅ from()에 제네릭 제거, select() 뒤에 .returns<Row[]>()로 타입 지정
     let query = supabaseAdmin
-      .from<Row>(table)
+      .from(table)
       .select(
         'prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value',
         { head: false }
@@ -93,7 +92,8 @@ export async function GET(req: Request) {
       .order('prd_de', { ascending: true })
       .order('region_code', { ascending: true })
 
-    const { data, error } = await query
+    const { data, error } = await query.returns<Row[]>() // ← 여기!
+
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     }
