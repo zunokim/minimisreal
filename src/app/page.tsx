@@ -70,7 +70,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-white p-8">
-      <h1 className="text-3xl font-bold mb-8">" 하싫핑 하하방 "</h1>
+      <h1 className="text-3xl font-bold mb-8">하싫핑 하하방</h1>
 
       <div className="mb-8 space-y-2">
         <p className="text-lg">📅 {date}</p>
