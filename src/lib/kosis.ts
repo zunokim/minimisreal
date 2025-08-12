@@ -1,4 +1,5 @@
 // src/lib/kosis.ts
+//kosis api
 const BASE = 'https://kosis.kr/openapi'
 
 const API_KEY = process.env.KOSIS_API_KEY!
