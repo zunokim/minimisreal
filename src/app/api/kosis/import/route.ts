@@ -1,4 +1,4 @@
-// src/app/api/kosis/import/route.ts/check
+// src/app/api/kosis/import/route.ts
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { fetchKosisData, normalizeKosisRows } from '@/lib/kosis'
@@ -21,11 +21,13 @@ export async function GET(request: Request) {
   const startPrdDe = searchParams.get('startPrdDe')
   const endPrdDe = searchParams.get('endPrdDe')
   const newEstPrdCnt = searchParams.get('newEstPrdCnt') // 최신 N건
-  const itmId = searchParams.get('itmId') // ALL 또는 개별 코드
+  const itmId = searchParams.get('itmId') // ALL or code
   const regionKey = (searchParams.get('regionKey') as 'C1' | 'C2' | 'C3' | null) ?? 'C1'
 
-  // 지역 objL* 파라미터(있는 것만 전달)
+  // ✅ objL & objL1~objL8 모두 지원 (테이블별 요구사항 다름)
   const objParams: Record<string, string> = {}
+  const objL = searchParams.get('objL')
+  if (objL) objParams['objL'] = objL
   ;['objL1','objL2','objL3','objL4','objL5','objL6','objL7','objL8'].forEach((k) => {
     const v = searchParams.get(k)
     if (v) objParams[k] = v
@@ -45,22 +47,23 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 1) KOSIS 데이터 호출 (항상 배열로 반환됨)
+    // 1) KOSIS 호출 파라미터
     const params: Record<string, string> = { orgId, tblId, prdSe, format: 'json', ...objParams }
     if (itmId) params.itmId = itmId
     if (startPrdDe) params.startPrdDe = startPrdDe
     if (endPrdDe) params.endPrdDe = endPrdDe!
     if (newEstPrdCnt) params.newEstPrdCnt = newEstPrdCnt
 
-    const rawRows = await fetchKosisData(params) // ← 이제 무조건 배열
+    // 2) 호출 (이제 배열 보장)
+    const rawRows = await fetchKosisData(params)
     if (!Array.isArray(rawRows) || rawRows.length === 0) {
       return NextResponse.json({ ok: true, inserted: 0, note: 'no rows' })
     }
 
-    // 2) 정규화
+    // 3) 정규화
     const rows = normalizeKosisRows(rawRows, { orgId, tblId, regionKey })
 
-    // 3) DB upsert
+    // 4) Upsert
     const table = pickImportTable(dataset)
     const { error } = await supabaseAdmin
       .from(table)
