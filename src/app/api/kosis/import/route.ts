@@ -62,7 +62,7 @@ export async function GET(req: Request) {
 
     const dryRun = parseBool(searchParams.get('dryRun'))
 
-    // 3) KOSIS 호출 파라미터 (✅ 정확한 타입으로 구성)
+    // ✅ 3) KOSIS 호출 파라미터: 타입에 맞게 명시적으로 구성
     const kosisParams: KosisParamDataParams = {
       orgId,
       tblId,
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
       format: 'json',
     }
 
-    // 4) KOSIS 데이터 호출
+    // 4) KOSIS 데이터 호출 (⚠️ 기존의 `fetchKosisData(params)`가 아니라 `kosisParams`를 전달)
     const rawRows = await fetchKosisData(kosisParams)
     if (!Array.isArray(rawRows)) {
       return NextResponse.json(
@@ -92,7 +92,7 @@ export async function GET(req: Request) {
       regionKey,
     })
 
-    // dryRun 이면 실제 DB 쓰기 없이 미리보기
+    // dryRun 모드: DB 쓰기 없이 미리보기
     if (dryRun) {
       return NextResponse.json({
         ok: true,
