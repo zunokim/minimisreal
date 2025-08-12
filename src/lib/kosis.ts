@@ -1,214 +1,191 @@
 // src/lib/kosis.ts
-//kosis api
-const BASE = 'https://kosis.kr/openapi'
+/* KOSIS 호출 + 정규화 유틸 */
 
-const API_KEY = process.env.KOSIS_API_KEY!
-if (!API_KEY) {
-  throw new Error('Missing KOSIS_API_KEY')
-}
+type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue }
 
-export type KosisApiRow = {
-  PRD_SE?: string
-  PRD_DE?: string
-  ITM_ID?: string
-  ITM_NM?: string
-  UNIT_NM?: string
-  DT?: string | number
-  [key: string]: unknown // 인덱스 시그니처(OBJ 레벨 C1/C2 등 접근용)
-}
+export type KosisRawRow = Record<string, string>
 
-/** 문자열이면 그대로, 아니면 null */
-function asString(v: unknown): string | null {
-  return typeof v === 'string' ? v : null
-}
-
-/** 객체 안전 접근 */
-function get(obj: Record<string, unknown>, key: string): unknown {
-  return Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined
-}
-
-/** 느슨한(JSON 같지만 규칙 어긴) 응답을 JSON으로 보정 */
-function repairLooseJson(text: string): string {
-  let s = text.trim()
-  // 1) 키 따옴표 보정: { key: ... } 또는 , key: ... -> "key"
-  s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
-  // 2) 마지막 요소 뒤의 불필요한 쉼표 제거: ,]  ,}
-  s = s.replace(/,\s*([}\]])/g, '$1')
-  // 3) BOM 제거
-  s = s.replace(/^\uFEFF/, '')
-  return s
-}
-
-/** 텍스트 → JSON 파싱(실패 시 원문/보정본 스니펫 제공) */
-async function getJsonSafely(url: URL): Promise<unknown> {
-  const res = await fetch(url.toString())
-  const text = await res.text()
-
-  if (!res.ok) {
-    const snippet = text.slice(0, 400)
-    throw new Error(`KOSIS HTTP ${res.status}: ${snippet}`)
-  }
-
-  // 1차: 그대로 파싱
-  try {
-    return JSON.parse(text)
-  } catch {
-    // 2차: 보정 후 재시도
-    try {
-      const repaired = repairLooseJson(text)
-      return JSON.parse(repaired)
-    } catch {
-      const snippet = text.slice(0, 400)
-      throw new Error(`KOSIS returned non-JSON. Preview: ${snippet}`)
-    }
-  }
-}
-
-/** KOSIS 응답을 "반드시 배열"로 풀어주는 언래퍼 */
-function unwrapToArray(payload: unknown): unknown[] {
-  // a) 이미 배열
-  if (Array.isArray(payload)) return payload
-
-  // b) 객체: 에러/후보키 검사
-  if (payload && typeof payload === 'object') {
-    const obj = payload as Record<string, unknown>
-
-    // 표준 에러 포맷 처리
-    const errCode = asString(get(obj, 'err'))
-    if (errCode) {
-      const msg = asString(get(obj, 'errMsg')) ?? ''
-      throw new Error(`KOSIS error ${errCode}: ${msg}`)
-    }
-
-    // 객체 내 존재하는 배열을 우선 사용
-    for (const key of Object.keys(obj)) {
-      const v = obj[key]
-      if (Array.isArray(v)) return v as unknown[]
-    }
-
-    // 후보 키들 재확인(대/소문자 혼용 대비)
-    const candidates = [
-      'StatisticSearch',
-      'statisticSearch',
-      'data',
-      'DATA',
-      'list',
-      'List',
-      'items',
-      'ITEMS',
-      'result',
-      'results',
-      'return',
-      'value',
-    ] as const
-
-    for (const key of candidates) {
-      const v = get(obj, key)
-      if (Array.isArray(v)) return v as unknown[]
-    }
-
-    const keysPreview = Object.keys(obj).join(',')
-    throw new Error(`KOSIS data: expected array but got object with keys: [${keysPreview}]`)
-  }
-
-  // c) 문자열: 재파싱 시도
-  if (typeof payload === 'string') {
-    try {
-      const j = JSON.parse(payload)
-      return unwrapToArray(j)
-    } catch {
-      const repaired = repairLooseJson(payload)
-      try {
-        const j2 = JSON.parse(repaired)
-        return unwrapToArray(j2)
-      } catch {
-        throw new Error('KOSIS data: unexpected string payload (cannot parse)')
-      }
-    }
-  }
-
-  // d) 그 외 타입
-  throw new Error(`KOSIS data: unsupported payload type: ${typeof payload}`)
-}
-
-/**
- * 1) 메타(구조) 조회
- */
-export async function fetchKosisMeta(params: {
+export interface NormalizeOptions {
   orgId: string
   tblId: string
-  type?: 'TBL' | 'ITM' | 'OBJ'
-  format?: 'json' | 'xml'
-}): Promise<unknown> {
-  const url = new URL(`${BASE}/statisticsData.do`)
-  url.searchParams.set('method', 'getMeta')
-  url.searchParams.set('apiKey', API_KEY)
-  url.searchParams.set('type', params.type ?? 'TBL')
-  url.searchParams.set('orgId', params.orgId)
-  url.searchParams.set('tblId', params.tblId)
-  url.searchParams.set('format', params.format ?? 'json')
-  return getJsonSafely(url)
+  /** C1(시도) | C2(시군구) | C3(동/읍/면) … */
+  regionKey: 'C1' | 'C2' | 'C3' | string
 }
 
+/** 안전한 숫자 파서 (빈문자/'-'/'.' 등은 0 처리) */
+function toNumberSafe(v: string | undefined): number {
+  if (!v) return 0
+  const t = v.trim()
+  if (!t || t === '-' || t === '.') return 0
+  const n = Number(t.replace(/,/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
+/** 환경변수 키 트림 (앞뒤 공백 방지) */
+const RAW_API_KEY = process.env.KOSIS_API_KEY ?? ''
+const API_KEY = RAW_API_KEY.trim()
+if (!API_KEY) {
+  // 서버 기동 시 바로 에러
+  // (로컬/프로드 둘 다 필요)
+  console.warn('⚠️ Missing KOSIS_API_KEY')
+}
+
+/** KOSIS 기본 엔드포인트 */
+const KOSIS_BASE =
+  'https://kosis.kr/openapi/Param/statisticsParameterData.do?method=getList'
+
 /**
- * 2) 실제 데이터 조회(파라미터 방식)
- *  - 항상 "배열"로 반환되도록 언래핑
+ * KOSIS 데이터 호출
+ * - params: orgId, tblId, prdSe, startPrdDe/endPrdDe 또는 newEstPrdCnt, itmId, objL1~objL8/objL, format=json
  */
-export async function fetchKosisData(params: Record<string, string>): Promise<KosisApiRow[]> {
-  const url = new URL(`${BASE}/Param/statisticsParameterData.do`)
-  url.searchParams.set('method', 'getList')
+export async function fetchKosisData(
+  params: Record<string, string>
+): Promise<KosisRawRow[]> {
+  const url = new URL(KOSIS_BASE)
+  // 필수
   url.searchParams.set('apiKey', API_KEY)
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v)
-  }
-  if (!url.searchParams.get('format')) url.searchParams.set('format', 'json')
+  // 사용자 전달 파라미터
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
 
-  const payload = await getJsonSafely(url)
-  const arr = unwrapToArray(payload)
-  return arr as KosisApiRow[]
+  const res = await fetch(url.toString(), {
+    // KOSIS는 종종 캐시가 걸려서 최신이 늦게 보일 수 있어요
+    // 여기서는 네트워크 우선
+    cache: 'no-store',
+  })
+
+  const txt = await res.text()
+
+  // 정상 JSON 배열: [ {...}, {...} ]
+  if (txt.trim().startsWith('[')) {
+    try {
+      const json = JSON.parse(txt) as KosisRawRow[]
+      return json
+    } catch (e) {
+      throw new Error(`KOSIS JSON parse error: ${String(e)}\nPreview: ${txt.slice(0, 200)}`)
+    }
+  }
+
+  // 에러 오브젝트: {"err":"..","errMsg":".."}
+  if (txt.trim().startsWith('{')) {
+    try {
+      const obj = JSON.parse(txt) as { err?: string; errMsg?: string }
+      throw new Error(`KOSIS error ${obj.err ?? ''}: ${obj.errMsg ?? 'unknown'}`)
+    } catch {
+      // 진짜 JSON 아니면 아래로
+    }
+  }
+
+  // 비표준 포맷 (예: {TBL_NM:"..."}) → 최소한의 파싱
+  if (/^\{\s*[A-Za-z0-9_]+\s*:/m.test(txt)) {
+    // 간이 변환: key: "val" 형태로 바꾸기
+    const fixed = txt
+      .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":')
+      .replace(/:\s*'([^']*)'/g, ':"$1"')
+    try {
+      const json = JSON.parse(fixed)
+      // 메타 응답 등은 여기로 들어오므로 빈 배열 반환
+      return Array.isArray(json) ? (json as KosisRawRow[]) : []
+    } catch {
+      throw new Error(`KOSIS returned non-JSON. Preview: ${txt.slice(0, 200)}`)
+    }
+  }
+
+  throw new Error(`KOSIS unexpected response. HTTP ${res.status}. Preview: ${txt.slice(0, 200)}`)
+}
+
+/** 정규화 결과 타입 */
+export interface KosisNormalizedRow {
+  org_id: string
+  tbl_id: string
+  prd_se: string
+  prd_de: string
+  region_code: string
+  region_name: string
+  itm_id: string
+  itm_name: string
+  unit: string
+  value: number
+  raw: JsonValue
 }
 
 /**
- * 3) 응답을 DB에 넣기 쉬운 모양으로 변환(정규화)
- *  - regionKey: 'C1' | 'C2' | 'C3'
+ * 정규화
+ * - C1: region_code = row.C1
+ * - C2: region_code = `${row.C1}|${row.C2}`  ← ⚠️ 충돌 방지 (시도+시군구 복합키)
+ * - C3 이상도 동일한 규칙으로 확장 가능 (C1|C2|C3 ...)
+ * - 중복 방지: 동일 (org_id,tbl_id,prd_de,region_code,itm_id) 키가 입력에 2번 오면 1개만 남김
  */
 export function normalizeKosisRows(
-  rows: KosisApiRow[],
-  opts: { orgId: string; tblId: string; regionKey?: 'C1' | 'C2' | 'C3' }
-) {
-  const regionKey = opts.regionKey ?? 'C1'
-  const regionNameKey = `${regionKey}_NM`
+  rawRows: KosisRawRow[],
+  opts: NormalizeOptions
+): KosisNormalizedRow[] {
+  const { orgId, tblId, regionKey } = opts
 
-  const list: KosisApiRow[] = Array.isArray(rows) ? rows : []
+  const rows: KosisNormalizedRow[] = rawRows.map((r) => {
+    const prd_se = r.PRD_SE ?? ''
+    const prd_de = r.PRD_DE ?? ''
 
-  return list.map((r) => {
-    const region_code = asString(get(r, regionKey as string)) ?? ''
-    const region_name = asString(get(r, regionNameKey))
+    // 아이템(항목)
+    const itm_id = (r.ITM_ID ?? 'ALL').trim()
+    const itm_name = (r.ITM_NM ?? '항목').trim()
 
-    let value: number | null
-    if (r.DT === null || r.DT === undefined || r.DT === '') {
-      value = null
-    } else if (typeof r.DT === 'number') {
-      value = r.DT
-    } else if (typeof r.DT === 'string') {
-      const n = Number(r.DT)
-      value = Number.isFinite(n) ? n : null
+    // 단위
+    const unit = (r.UNIT_NM ?? '').trim()
+
+    // 값
+    const value = toNumberSafe(r.DT)
+
+    // 지역 코드/이름 구성
+    let region_code = ''
+    let region_name = ''
+
+    const c1 = r.C1 ?? ''
+    const c1_nm = r.C1_NM ?? ''
+    const c2 = r.C2 ?? ''
+    const c2_nm = r.C2_NM ?? ''
+    const c3 = (r as any).C3 ?? ''
+    const c3_nm = (r as any).C3_NM ?? ''
+
+    if (regionKey === 'C1') {
+      region_code = c1
+      region_name = c1_nm || c1 || '(C1)'
+    } else if (regionKey === 'C2') {
+      // ⚠️ 충돌 방지: C1 + C2 복합
+      region_code = `${c1}|${c2}`.trim()
+      region_name = (c1_nm && c2_nm) ? `${c1_nm} ${c2_nm}` : (c2_nm || c1_nm || '(C2)')
+    } else if (regionKey === 'C3') {
+      // 필요 시 확장
+      region_code = `${c1}|${c2}|${c3}`.trim()
+      region_name = [c1_nm, c2_nm, c3_nm].filter(Boolean).join(' ')
     } else {
-      value = null
+      // 기타 키가 오면 해당 키 그대로 사용 시도
+      const ck = r[regionKey] ?? ''
+      const ckn = (r as any)[`${regionKey}_NM`] ?? ''
+      region_code = ck
+      region_name = ckn || ck || '(REGION)'
     }
 
     return {
-      org_id: opts.orgId,
-      tbl_id: opts.tblId,
-      prd_se: r.PRD_SE ?? '',
-      prd_de: r.PRD_DE ?? '',
+      org_id: orgId,
+      tbl_id: tblId,
+      prd_se,
+      prd_de,
       region_code,
       region_name,
-      itm_id: r.ITM_ID ?? '',
-      itm_name: (r.ITM_NM as string) ?? null,
-      unit: (r.UNIT_NM as string) ?? null,
+      itm_id,
+      itm_name,
+      unit,
       value,
-      raw: r,
+      raw: r as unknown as JsonValue,
     }
   })
+
+  // 입력 내부 중복 제거 (같은 키가 2번 오면 마지막 값만 유지)
+  const dedup = new Map<string, KosisNormalizedRow>()
+  for (const row of rows) {
+    const key = `${row.org_id}|${row.tbl_id}|${row.prd_de}|${row.region_code}|${row.itm_id}`
+    dedup.set(key, row)
+  }
+
+  return Array.from(dedup.values())
 }
