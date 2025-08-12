@@ -1,4 +1,3 @@
-// src/app/board/[id]/BoardDetailClient.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -28,6 +27,7 @@ type Me = { id: string } | null
 
 export default function BoardDetailClient({ postId }: { postId: string }) {
   const router = useRouter()
+
   const [me, setMe] = useState<Me>(null)
   const [post, setPost] = useState<Post | null>(null)
   const [comments, setComments] = useState<Comment[]>([])
@@ -43,6 +43,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
   const [editingTitle, setEditingTitle] = useState('')
   const [editingContent, setEditingContent] = useState('')
 
+  /** 현재 로그인 사용자 로드 */
   useEffect(() => {
     const loadMe = async () => {
       const {
@@ -50,11 +51,13 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       } = await supabase.auth.getUser()
       setMe(user ? { id: user.id } : null)
     }
-    loadMe()
-    const { data: sub } = supabase.auth.onAuthStateChange(() => loadMe())
+    void loadMe()
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => void loadMe())
     return () => sub.subscription?.unsubscribe()
   }, [])
 
+  /** 게시글 + 댓글 로드 */
   useEffect(() => {
     async function load() {
       try {
@@ -88,9 +91,10 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
         setLoading(false)
       }
     }
-    load()
+    void load()
   }, [postId])
 
+  /** 게시글 삭제 (RLS: 본인만 가능) */
   const handleDeletePost = async () => {
     if (!confirm('이 게시글을 삭제할까요?')) return
     const { error: delErr } = await supabase.from('posts').delete().eq('id', postId)
@@ -98,6 +102,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     router.push('/board')
   }
 
+  /** 게시글 수정 저장 (RLS: 본인만 가능) */
   const handleSavePost = async () => {
     if (!editingTitle.trim() || !editingContent.trim()) {
       alert('제목과 내용을 입력하세요.')
@@ -113,6 +118,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setEditingPost(false)
   }
 
+  /** 댓글 등록 (RLS: 본인 user_id로만 삽입 허용) */
   const handleAddComment = async () => {
     const text = newComment.trim()
     if (!text) return
@@ -125,6 +131,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
       return
     }
 
+    // 표시용 author
     let author = '익명'
     const { data: profile } = await supabase
       .from('profiles')
@@ -148,6 +155,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setNewComment('')
   }
 
+  /** 댓글 수정 상태 진입 */
   const startEditComment = (c: Comment) => {
     if (!me || !c.user_id || me.id !== c.user_id) {
       alert('본인 댓글만 수정할 수 있습니다.')
@@ -161,6 +169,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setEditingCommentText('')
   }
 
+  /** 댓글 저장 (RLS: 본인만 가능) */
   const saveEditComment = async () => {
     if (!editingCommentId) return
     const text = editingCommentText.trim()
@@ -177,6 +186,15 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     setEditingCommentText('')
   }
 
+  /** ✅ 댓글 삭제 (RLS: 본인만 가능) — 빠지면 빌드 에러 발생 */
+  const handleDeleteComment = async (id: string) => {
+    if (!confirm('이 댓글을 삭제할까요?')) return
+    const { error: delErr } = await supabase.from('comments').delete().eq('id', id)
+    if (delErr) return alert(`댓글 삭제 실패: ${delErr.message}`)
+    setComments((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  /** 로딩/에러 처리 */
   if (loading) return <div className="text-gray-600">불러오는 중...</div>
 
   if (error || !post) {
@@ -190,6 +208,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     )
   }
 
+  /** 소유자 판별 */
   const isMyPost = !!(me?.id && post.user_id && me.id === post.user_id)
 
   return (
@@ -253,7 +272,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
           <p className="text-sm text-gray-500 mb-4">
             작성자: {post.author ?? '익명'} · {new Date(post.created_at).toLocaleString('ko-KR')}
           </p>
-          {/* ✅ 긴 URL/단어도 박스 안에서 안전하게 줄바꿈 */}
           <div className="leading-7 break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
             {post.content}
           </div>
@@ -335,7 +353,6 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
                   </>
                 ) : (
                   <>
-                    {/* ✅ 댓글 본문도 안전한 줄바꿈 */}
                     <p className="whitespace-pre-wrap leading-7 mb-2 break-words [overflow-wrap:anywhere]">
                       {c.content}
                     </p>
