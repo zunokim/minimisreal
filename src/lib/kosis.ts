@@ -19,21 +19,16 @@ export type KosisApiRow = {
 /** 느슨한(JSON 같지만 규칙 어긴) 응답을 JSON으로 보정 */
 function repairLooseJson(text: string): string {
   let s = text.trim()
-
-  // 1) 키에 따옴표가 없는 패턴: { key: ... } 또는 , key: ...
-  //   → { "key": ... } 로 보정
+  // 1) 키에 따옴표가 없는 패턴 보정: { key: ... } 또는 , key: ...
   s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
-
-  // 2) 마지막 요소 뒤의 불필요한 쉼표 제거: ,]  ,}
+  // 2) 마지막 요소 뒤 쉼표 제거
   s = s.replace(/,\s*([}\]])/g, '$1')
-
-  // 3) BOM/제어문자 제거(혹시 몰라서)
+  // 3) BOM 제거
   s = s.replace(/^\uFEFF/, '')
-
   return s
 }
 
-/** 안전한 JSON 파서: 실패 시 보정 시도 후 다시 파싱 */
+/** 텍스트 → JSON 파싱(실패 시 원문/보정본 스니펫 제공) */
 async function getJsonSafely(url: URL) {
   const res = await fetch(url.toString())
   const text = await res.text()
@@ -47,7 +42,7 @@ async function getJsonSafely(url: URL) {
   try {
     return JSON.parse(text)
   } catch {
-    // 2차: 느슨한 JSON 보정 후 재시도
+    // 2차: 보정 후 재시도
     try {
       const repaired = repairLooseJson(text)
       return JSON.parse(repaired)
@@ -58,9 +53,73 @@ async function getJsonSafely(url: URL) {
   }
 }
 
+/** KOSIS 응답을 "반드시 배열"로 풀어주는 언래퍼 */
+function unwrapToArray(payload: unknown): unknown[] {
+  // a) 이미 배열이면 OK
+  if (Array.isArray(payload)) return payload
+
+  // b) 에러 포맷 처리
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>
+
+    // 공통 에러 포맷
+    if (typeof obj.err === 'string') {
+      const code = obj.err
+      const msg = typeof obj.errMsg === 'string' ? obj.errMsg : ''
+      throw new Error(`KOSIS error ${code}: ${msg}`)
+    }
+
+    // 자주 보이는 배열 키 후보들 중 첫 번째 배열을 채택
+    const candidates = [
+      'StatisticSearch',
+      'statisticSearch',
+      'data',
+      'DATA',
+      'list',
+      'List',
+      'items',
+      'ITEMS',
+      'result',
+      'results',
+      'return',
+      'value',
+    ]
+    for (const key of Object.keys(obj)) {
+      const v = obj[key]
+      if (Array.isArray(v)) return v
+    }
+    for (const key of candidates) {
+      const v = (obj as any)[key]
+      if (Array.isArray(v)) return v
+    }
+
+    // 객체 안에 배열이 하나도 없다면 예상치 못한 포맷
+    const keysPreview = Object.keys(obj).join(',')
+    throw new Error(`KOSIS data: expected array but got object with keys: [${keysPreview}]`)
+  }
+
+  // c) 문자열로 온 경우 다시 파싱 시도
+  if (typeof payload === 'string') {
+    try {
+      const j = JSON.parse(payload)
+      return unwrapToArray(j)
+    } catch {
+      const repaired = repairLooseJson(payload)
+      try {
+        const j2 = JSON.parse(repaired)
+        return unwrapToArray(j2)
+      } catch {
+        throw new Error(`KOSIS data: unexpected string payload (cannot parse)`)
+      }
+    }
+  }
+
+  // d) 그 외 타입
+  throw new Error(`KOSIS data: unsupported payload type: ${typeof payload}`)
+}
+
 /**
  * 1) 메타(구조) 조회
- * - 표의 항목/지역 코드, 주기 등을 확인
  */
 export async function fetchKosisMeta(params: {
   orgId: string
@@ -79,10 +138,10 @@ export async function fetchKosisMeta(params: {
 }
 
 /**
- * 2) 데이터 조회(파라미터 방식)
- * - 예: prdSe=M, startPrdDe=202201, endPrdDe=202507, itmId=ALL, objL1=11000 ...
+ * 2) 실제 데이터 조회(파라미터 방식)
+ *  - 항상 "배열"로 반환되도록 언래핑
  */
-export async function fetchKosisData(params: Record<string, string>) {
+export async function fetchKosisData(params: Record<string, string>): Promise<KosisApiRow[]> {
   const url = new URL(`${BASE}/Param/statisticsParameterData.do`)
   url.searchParams.set('method', 'getList')
   url.searchParams.set('apiKey', API_KEY)
@@ -90,12 +149,15 @@ export async function fetchKosisData(params: Record<string, string>) {
     url.searchParams.set(k, v)
   }
   if (!url.searchParams.get('format')) url.searchParams.set('format', 'json')
-  return getJsonSafely(url)
+
+  const payload = await getJsonSafely(url)
+  const arr = unwrapToArray(payload)
+  return arr as KosisApiRow[]
 }
 
 /**
  * 3) 응답을 DB에 넣기 쉬운 모양으로 변환(정규화)
- * - regionKey: 'C1' | 'C2' | 'C3' (표마다 지역 키가 다를 수 있음)
+ *  - regionKey: 'C1' | 'C2' | 'C3'
  */
 export function normalizeKosisRows(
   rows: KosisApiRow[],
@@ -104,11 +166,14 @@ export function normalizeKosisRows(
   const regionKey = opts.regionKey ?? 'C1'
   const regionNameKey = `${regionKey}_NM`
 
-  return (rows ?? []).map((r) => {
+  // 혹시 배열이 아닌 게 들어와도 방어
+  const list = Array.isArray(rows) ? rows : []
+
+  return list.map((r) => {
     const region_code =
-      typeof r[regionKey] === 'string' ? (r[regionKey] as string) : ''
+      typeof (r as any)[regionKey] === 'string' ? ((r as any)[regionKey] as string) : ''
     const region_name =
-      typeof r[regionNameKey] === 'string' ? (r[regionNameKey] as string) : null
+      typeof (r as any)[regionNameKey] === 'string' ? ((r as any)[regionNameKey] as string) : null
 
     const value =
       r.DT === null || r.DT === undefined || r.DT === '' ? null : Number(r.DT)
