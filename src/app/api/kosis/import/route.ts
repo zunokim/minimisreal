@@ -11,6 +11,15 @@ function pickImportTable(dataset: string) {
   throw new Error('dataset must be "hcsi" or "unsold"')
 }
 
+function toErrMessage(e: unknown) {
+  if (e instanceof Error) return e.message
+  try {
+    return JSON.stringify(e)
+  } catch {
+    return String(e)
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
 
@@ -23,8 +32,9 @@ export async function GET(request: Request) {
   const newEstPrdCnt = searchParams.get('newEstPrdCnt') // 최신 N건
   const itmId = searchParams.get('itmId') // ALL or code
   const regionKey = (searchParams.get('regionKey') as 'C1' | 'C2' | 'C3' | null) ?? 'C1'
+  const dryRun = searchParams.get('dryRun') === '1' // 미리보기 모드
 
-  // ✅ objL & objL1~objL8 모두 지원 (테이블별 요구사항 다름)
+  // ✅ objL & objL1~objL8 모두 수용
   const objParams: Record<string, string> = {}
   const objL = searchParams.get('objL')
   if (objL) objParams['objL'] = objL
@@ -47,23 +57,47 @@ export async function GET(request: Request) {
   }
 
   try {
-    // 1) KOSIS 호출 파라미터
+    // 1) KOSIS 호출 파라미터 구성
     const params: Record<string, string> = { orgId, tblId, prdSe, format: 'json', ...objParams }
     if (itmId) params.itmId = itmId
     if (startPrdDe) params.startPrdDe = startPrdDe
     if (endPrdDe) params.endPrdDe = endPrdDe!
     if (newEstPrdCnt) params.newEstPrdCnt = newEstPrdCnt
 
-    // 2) 호출 (이제 배열 보장)
+    // 2) KOSIS 호출
     const rawRows = await fetchKosisData(params)
-    if (!Array.isArray(rawRows) || rawRows.length === 0) {
-      return NextResponse.json({ ok: true, inserted: 0, note: 'no rows' })
+
+    // KOSIS가 에러 오브젝트를 줄 가능성 방지: 배열 보장 검사
+    if (!Array.isArray(rawRows)) {
+      // err/errMsg 형태면 그대로 노출
+      const errMsg = toErrMessage(rawRows)
+      return NextResponse.json(
+        { ok: false, error: `KOSIS returned non-array: ${errMsg}`, params },
+        { status: 502 }
+      )
+    }
+
+    if (rawRows.length === 0) {
+      return NextResponse.json({ ok: true, inserted: 0, note: 'no rows', params })
     }
 
     // 3) 정규화
     const rows = normalizeKosisRows(rawRows, { orgId, tblId, regionKey })
 
-    // 4) Upsert
+    // 4) dryRun(미리보기) 모드: DB 저장 없이 프리뷰
+    if (dryRun) {
+      return NextResponse.json({
+        ok: true,
+        mode: 'dryRun',
+        count: rows.length,
+        rawCount: rawRows.length,
+        rawPreview: rawRows.slice(0, 3),
+        normalizedPreview: rows.slice(0, 3),
+        params,
+      })
+    }
+
+    // 5) Upsert
     const table = pickImportTable(dataset)
     const { error } = await supabaseAdmin
       .from(table)
@@ -77,9 +111,14 @@ export async function GET(request: Request) {
 
     if (error) throw error
 
-    return NextResponse.json({ ok: true, inserted: rows.length })
+    return NextResponse.json({ ok: true, inserted: rows.length, params })
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+    return NextResponse.json(
+      {
+        ok: false,
+        error: toErrMessage(e),
+      },
+      { status: 500 }
+    )
   }
 }
