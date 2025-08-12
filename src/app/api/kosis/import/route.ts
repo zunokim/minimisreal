@@ -1,4 +1,4 @@
-// src/app/api/kosis/import/route.ts
+// src/app/api/kosis/import/route.ts/check
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { fetchKosisData, normalizeKosisRows } from '@/lib/kosis'
