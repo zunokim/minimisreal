@@ -36,9 +36,19 @@ const KOSIS_DATA_BASE =
 const KOSIS_META_BASE =
   'https://kosis.kr/openapi/Param/statisticsParameterMeta.do?method=getMeta'
 
+const DEFAULT_HEADERS = {
+  // 일부 환경에서 UA 없으면 HTML 페이지가 반환되는 경우가 있어 명시
+  'User-Agent': 'minimisreal/1.0 (+https://minimisreal.vercel.app)',
+}
+
 /** 느슨한 JSON 파서: {TBL_NM:"..."} 같은 비표준도 수용 */
 function parseLooseJson(text: string): unknown {
   const trimmed = text.trim()
+
+  // HTML(오류 페이지 등)일 경우 바로 에러
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    throw new Error(`Non-JSON response. Preview: ${trimmed.slice(0, 200)}`)
+  }
 
   // 정상 JSON
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
@@ -66,9 +76,12 @@ export async function fetchKosisData(
 ): Promise<KosisRawRow[]> {
   const url = new URL(KOSIS_DATA_BASE)
   url.searchParams.set('apiKey', API_KEY)
+  // 데이터 API는 원래도 json 파라미터를 붙였지만 혹시 모르니 보강
+  url.searchParams.set('format', 'json')
+  url.searchParams.set('jsonVD', 'Y') // 가능한 경우 유효 JSON 강제
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
 
-  const res = await fetch(url.toString(), { cache: 'no-store' })
+  const res = await fetch(url.toString(), { cache: 'no-store', headers: DEFAULT_HEADERS })
   const txt = await res.text()
 
   // 표준/비표준 모두 허용
@@ -98,14 +111,16 @@ export async function fetchKosisMeta(
 ): Promise<unknown> {
   const url = new URL(KOSIS_META_BASE)
   url.searchParams.set('apiKey', API_KEY)
+  url.searchParams.set('format', 'json') // ✅ JSON 강제
+  url.searchParams.set('jsonVD', 'Y')    // ✅ 유효 JSON(키에 따옴표)
   url.searchParams.set('orgId', params.orgId)
   url.searchParams.set('tblId', params.tblId)
   if (params.type) url.searchParams.set('type', params.type)
 
-  const res = await fetch(url.toString(), { cache: 'no-store' })
+  const res = await fetch(url.toString(), { cache: 'no-store', headers: DEFAULT_HEADERS })
   const txt = await res.text()
 
-  // 메타는 배열/객체/비표준 모두 가능 → 느슨 파서 사용
+  // 메타는 배열/객체/비표준/HTML 가능 → 느슨 파서 사용 (HTML이면 위에서 에러)
   return parseLooseJson(txt)
 }
 
