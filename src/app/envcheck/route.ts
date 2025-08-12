@@ -1,4 +1,4 @@
-// src/app/api/envcheck/route.ts
+// src/app/api/envcheck/route.ts 
 import { NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
