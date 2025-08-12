@@ -299,7 +299,7 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
         </div>
       )}
 
-      {/* 댓글 */}
+      {/*  댓글  */}
       <section className="mt-8">
         <h2 className="text-xl font-bold mb-4">댓글 {comments.length}개</h2>
 
@@ -384,3 +384,4 @@ export default function BoardDetailClient({ postId }: { postId: string }) {
     </div>
   )
 }
+ 
