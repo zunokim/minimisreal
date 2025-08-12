@@ -1,40 +1,21 @@
 // src/app/api/kosis/meta/route.ts
 import { NextResponse } from 'next/server'
-import { fetchKosisMeta } from '@/lib/kosis'
+import { fetchKosisTableMeta } from '@/lib/kosis'
 
-export const dynamic = 'force-dynamic'
-
-function toErrMessage(e: unknown) {
-  if (e instanceof Error) return e.message
+export async function GET(req: Request) {
   try {
-    return JSON.stringify(e)
-  } catch {
-    return String(e)
-  }
-}
+    const { searchParams } = new URL(req.url)
+    const orgId = searchParams.get('orgId') ?? ''
+    const tblId = searchParams.get('tblId') ?? ''
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
+    if (!orgId || !tblId) {
+      return NextResponse.json({ ok: false, error: 'Missing orgId or tblId' }, { status: 400 })
+    }
 
-  const orgId = searchParams.get('orgId')
-  const tblId = searchParams.get('tblId')
-  const type = searchParams.get('type') ?? undefined // 'TBL' | 'OBJ' | 'ITM' 등
-
-  if (!orgId || !tblId) {
-    return NextResponse.json(
-      { ok: false, error: '필수: orgId, tblId' },
-      { status: 400 }
-    )
-  }
-
-  try {
-    const data = await fetchKosisMeta({ orgId, tblId, type })
-    // fetchKosisMeta 내부에서 비표준 JSON도 파싱해 반환합니다.
+    const data = await fetchKosisTableMeta(orgId, tblId)
     return NextResponse.json({ ok: true, data })
   } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: toErrMessage(e) },
-      { status: 502 }
-    )
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }

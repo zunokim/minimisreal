@@ -1,194 +1,109 @@
 // src/lib/kosis.ts
-/* KOSIS 호출 + 정규화 유틸 (메타/데이터 공통) */
+import { headers } from 'next/headers'
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue }
-export type KosisRawRow = Record<string, string | undefined>
+const UA =
+  'Mozilla/5.0 (compatible; MISbot/1.0; +https://example.com)';
 
-export interface NormalizeOptions {
-  orgId: string
-  tblId: string
-  regionKey: 'C1' | 'C2' | 'C3' | string
+const KOSIS_API_KEY = process.env.KOSIS_API_KEY ?? '';
+if (!KOSIS_API_KEY) {
+  throw new Error('Missing KOSIS_API_KEY env');
 }
 
-function toNumberSafe(v: string | undefined): number {
-  if (!v) return 0
-  const t = v.trim()
-  if (!t || t === '-' || t === '.') return 0
-  const n = Number(t.replace(/,/g, ''))
-  return Number.isFinite(n) ? n : 0
+// ✅ 데이터 조회용 베이스 (반드시 /Param 포함)
+const BASE_PARAM = 'https://kosis.kr/openapi/Param';
+// ✅ 메타(통계표 설명)용 베이스 (여기는 /Param 없음)
+const BASE_META = 'https://kosis.kr/openapi';
+
+/** 공통 fetch(텍스트로 받고 필요시 JSON 파싱) */
+async function fetchText(url: string): Promise<{ ok: boolean; status: number; text: string }> {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json,text/plain,*/*',
+      // 일부 WAF 우회를 위해 리퍼러/오리진 비워둠
+    },
+    cache: 'no-store',
+  });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, text };
 }
 
-const RAW_API_KEY = process.env.KOSIS_API_KEY ?? ''
-const API_KEY = RAW_API_KEY.trim()
-if (!API_KEY) console.warn('⚠️ Missing KOSIS_API_KEY')
+/** KOSIS: 통계자료(Param) 조회 */
+export type KosisParamDataParams = {
+  orgId: string;
+  tblId: string;
+  prdSe: 'Y' | 'H' | 'Q' | 'M' | 'D' | 'IR' | 'F' | 'S';
+  startPrdDe?: string;
+  endPrdDe?: string;
+  itmId?: string;   // 기본: 'ALL'
+  objL1?: string;   // 기본: 'ALL'
+  objL2?: string;   // 기본: 'ALL'
+  objL3?: string;   // 필요 시
+  format?: 'json';
+};
 
-// 엔드포인트
-const KOSIS_DATA_BASE =
-  'https://kosis.kr/openapi/Param/statisticsParameterData.do?method=getList'
-const KOSIS_META_BASE =
-  'https://kosis.kr/openapi/Param/statisticsParameterMeta.do?method=getMeta'
+export type KosisDataRow = Record<string, string>;
 
-// 🔧 헤더 보강 (일부 환경에서 UA/Accept/Referer 없으면 HTML 반환)
-const DEFAULT_HEADERS: HeadersInit = {
-  'User-Agent': 'minimisreal/1.0 (+https://minimisreal.vercel.app)',
-  'Accept': 'application/json,text/plain,*/*',
-  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Referer': 'https://kosis.kr/openapi/',
-}
+export async function fetchKosisParamData(p: KosisParamDataParams): Promise<KosisDataRow[]> {
+  const url = new URL(`${BASE_PARAM}/statisticsParameterData.do`);
+  url.searchParams.set('method', 'getList');
+  url.searchParams.set('apiKey', KOSIS_API_KEY);
+  url.searchParams.set('format', p.format ?? 'json');
+  url.searchParams.set('orgId', p.orgId);
+  url.searchParams.set('tblId', p.tblId);
+  url.searchParams.set('prdSe', p.prdSe);
+  if (p.startPrdDe) url.searchParams.set('startPrdDe', p.startPrdDe);
+  if (p.endPrdDe) url.searchParams.set('endPrdDe', p.endPrdDe);
+  url.searchParams.set('itmId', p.itmId ?? 'ALL');
+  if (p.objL1) url.searchParams.set('objL1', p.objL1);
+  if (p.objL2) url.searchParams.set('objL2', p.objL2);
+  if (p.objL3) url.searchParams.set('objL3', p.objL3);
 
-// 간단 재시도 유틸
-async function fetchWithRetry(url: string, init: RequestInit, tries = 2): Promise<Response> {
-  let lastErr: unknown
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url, { ...init, redirect: 'follow', cache: 'no-store' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res
-    } catch (e) {
-      lastErr = e
-      await new Promise((r) => setTimeout(r, 250))
-    }
+  const { ok, status, text } = await fetchText(url.toString());
+  if (!ok) throw new Error(`KOSIS data HTTP ${status}`);
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`KOSIS data Non-JSON: ${text.slice(0, 120)}`);
   }
-  throw lastErr instanceof Error ? lastErr : new Error('fetch failed')
+  if (!Array.isArray(json)) {
+    throw new Error(`KOSIS data not array`);
+  }
+  // KOSIS는 문자열 필드들로 내려옵니다.
+  return json as KosisDataRow[];
 }
 
-// 느슨한 JSON 파서 (비표준 키/값 및 HTML 에러페이지 감지)
-function parseLooseJson(text: string): unknown {
-  const trimmed = text.trim()
+/** ✅ KOSIS: 통계표 설명(메타) — 테이블명, 기관명 등
+ * 요청 URL: https://kosis.kr/openapi/statisticsData.do?method=getMeta&type=TBL
+ * (주의: 여기엔 /Param 이 없음)
+ */
+export type KosisTableMeta = {
+  TBL_NM?: string;
+  TBL_NM_ENG?: string;
+  ORG_NM?: string;
+  [k: string]: string | undefined;
+};
 
-  // HTML이면 바로 에러
-  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
-    throw new Error(`Non-JSON response. Preview: ${trimmed.slice(0, 200)}`)
+export async function fetchKosisTableMeta(orgId: string, tblId: string): Promise<KosisTableMeta[]> {
+  const url = new URL(`${BASE_META}/statisticsData.do`);
+  url.searchParams.set('method', 'getMeta');
+  url.searchParams.set('type', 'TBL'); // 개발가이드 명시
+  url.searchParams.set('apiKey', KOSIS_API_KEY);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('orgId', orgId);
+  url.searchParams.set('tblId', tblId);
+
+  const { ok, status, text } = await fetchText(url.toString());
+  if (!ok) throw new Error(`KOSIS meta HTTP ${status}`);
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`KOSIS meta Non-JSON: ${text.slice(0, 120)}`);
   }
-
-  // 정상 JSON
-  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-    return JSON.parse(trimmed)
+  if (!Array.isArray(json)) {
+    throw new Error(`KOSIS meta not array`);
   }
-
-  // 비표준 포맷: {TBL_NM:"..."} / 키에 따옴표 없음
-  if (/^\s*\{/.test(trimmed)) {
-    const fixed = trimmed
-      .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":') // 키 따옴표
-      .replace(/:\s*'([^']*)'/g, ':"$1"') // 홑따옴표 값
-    return JSON.parse(fixed)
-  }
-
-  throw new Error(`Non-JSON response. Preview: ${trimmed.slice(0, 200)}`)
-}
-
-/** 데이터 조회 */
-export async function fetchKosisData(params: Record<string, string>): Promise<KosisRawRow[]> {
-  const url = new URL(KOSIS_DATA_BASE)
-  url.searchParams.set('apiKey', API_KEY)
-  url.searchParams.set('format', 'json')
-  url.searchParams.set('jsonVD', 'Y')
-  // 캐시/엣지 변덕 회피용 난수
-  url.searchParams.set('_', Date.now().toString())
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
-
-  const res = await fetchWithRetry(url.toString(), { headers: DEFAULT_HEADERS })
-  const txt = await res.text()
-  const parsed = parseLooseJson(txt)
-
-  if (Array.isArray(parsed)) return parsed as KosisRawRow[]
-
-  // {err:".."} 형태 에러면 메시지 던지기
-  const obj = parsed as { err?: string; errMsg?: string } | undefined
-  if (obj?.err || obj?.errMsg) {
-    throw new Error(`KOSIS error ${obj.err ?? ''}: ${obj.errMsg ?? 'unknown'}`)
-  }
-  throw new Error(`KOSIS returned non-array. Preview: ${txt.slice(0, 200)}`)
-}
-
-/** 메타 조회 (TBL/OBJ/ITM) */
-export async function fetchKosisMeta(params: { orgId: string; tblId: string; type?: string }): Promise<unknown> {
-  const url = new URL(KOSIS_META_BASE)
-  url.searchParams.set('apiKey', API_KEY)
-  url.searchParams.set('format', 'json')
-  url.searchParams.set('jsonVD', 'Y')
-  url.searchParams.set('orgId', params.orgId)
-  url.searchParams.set('tblId', params.tblId)
-  if (params.type) url.searchParams.set('type', params.type)
-  url.searchParams.set('_', Date.now().toString())
-
-  const res = await fetchWithRetry(url.toString(), { headers: DEFAULT_HEADERS })
-  const txt = await res.text()
-  return parseLooseJson(txt)
-}
-
-/** 정규화 결과 타입 */
-export interface KosisNormalizedRow {
-  org_id: string
-  tbl_id: string
-  prd_se: string
-  prd_de: string
-  region_code: string
-  region_name: string
-  itm_id: string
-  itm_name: string
-  unit: string
-  value: number
-  raw: JsonValue
-}
-
-/** 정규화 (C1/C2/C3 지원 + 내부 중복 제거) */
-export function normalizeKosisRows(rawRows: KosisRawRow[], opts: NormalizeOptions): KosisNormalizedRow[] {
-  const { orgId, tblId, regionKey } = opts
-
-  const rows: KosisNormalizedRow[] = rawRows.map((r) => {
-    const prd_se = r.PRD_SE ?? ''
-    const prd_de = r.PRD_DE ?? ''
-    const itm_id = (r.ITM_ID ?? 'ALL').trim()
-    const itm_name = (r.ITM_NM ?? '항목').trim()
-    const unit = (r.UNIT_NM ?? '').trim()
-    const value = toNumberSafe(r.DT)
-
-    const c1 = r['C1'] ?? ''
-    const c1_nm = r['C1_NM'] ?? ''
-    const c2 = r['C2'] ?? ''
-    const c2_nm = r['C2_NM'] ?? ''
-    const c3 = r['C3'] ?? ''
-    const c3_nm = r['C3_NM'] ?? ''
-
-    let region_code = ''
-    let region_name = ''
-
-    if (regionKey === 'C1') {
-      region_code = c1
-      region_name = c1_nm || c1 || '(C1)'
-    } else if (regionKey === 'C2') {
-      region_code = `${c1}|${c2}`.trim() // 충돌 방지용 복합키
-      region_name = c2_nm ? (c1_nm ? `${c1_nm} ${c2_nm}` : c2_nm) : (c1_nm || '(C2)')
-    } else if (regionKey === 'C3') {
-      region_code = `${c1}|${c2}|${c3}`.trim()
-      region_name = [c1_nm, c2_nm, c3_nm].filter(Boolean).join(' ')
-    } else {
-      const ck = r[regionKey] ?? ''
-      const ckn = r[`${regionKey}_NM`] ?? ''
-      region_code = ck
-      region_name = ckn || ck || '(REGION)'
-    }
-
-    return {
-      org_id: orgId,
-      tbl_id: tblId,
-      prd_se,
-      prd_de,
-      region_code,
-      region_name,
-      itm_id,
-      itm_name,
-      unit,
-      value,
-      raw: (r as unknown) as JsonValue,
-    }
-  })
-
-  const dedup = new Map<string, KosisNormalizedRow>()
-  for (const row of rows) {
-    const key = `${row.org_id}|${row.tbl_id}|${row.prd_de}|${row.region_code}|${row.itm_id}`
-    dedup.set(key, row)
-  }
-  return Array.from(dedup.values())
+  return json as KosisTableMeta[];
 }
