@@ -13,4 +13,7 @@ export async function GET() {
   }
 }
 
-export const dynamic = 'force-dynamic' // 캐시 방지 (선택)
+// Node.js 런타임 강제
+export const runtime = 'nodejs'
+// (선택) 캐시/프리렌더 방지
+export const dynamic = 'force-dynamic'

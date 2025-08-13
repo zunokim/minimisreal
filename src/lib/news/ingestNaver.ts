@@ -1,6 +1,7 @@
 // src/lib/news/ingestNaver.ts
 import crypto from 'node:crypto'
 import * as cheerio from 'cheerio'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const NAVER_ENDPOINT = 'https://openapi.naver.com/v1/search/news.json'
 const QUERY = '한화투자증권'
@@ -43,11 +44,9 @@ async function fetchArticleBody(url: string) {
   }
 }
 
-/**
- * 네이버 뉴스 수집 → 중복 제거 → Supabase 저장
- * 반환: { collected: 수집건, inserted: 저장(신규)건 }
- */
-export async function ingestNaverNews(supabase: any) {
+type IngestResult = { collected: number; inserted: number }
+
+export async function ingestNaverNews(supabase: SupabaseClient): Promise<IngestResult> {
   // 1) 네이버 API
   const apiRes = await fetch(
     `${NAVER_ENDPOINT}?query=${encodeURIComponent(QUERY)}&display=${DISPLAY}&sort=${SORT}`,
@@ -63,16 +62,17 @@ export async function ingestNaverNews(supabase: any) {
     const text = await apiRes.text().catch(() => '')
     throw new Error(`NAVER API: ${text || apiRes.statusText}`)
   }
-  const json = await apiRes.json()
-  const items: Array<{
-    title: string
-    originallink?: string
-    link: string
-    description?: string
-    pubDate?: string
-  }> = json.items || []
+  const json = await apiRes.json() as {
+    items?: Array<{
+      title: string
+      originallink?: string
+      link: string
+      description?: string
+      pubDate?: string
+    }>
+  }
+  const items = json.items || []
 
-  // 2) 가공 + 본문 시도 + 중복필드
   type Row = {
     title: string
     title_hash: string
@@ -107,21 +107,13 @@ export async function ingestNaverNews(supabase: any) {
       content = it.description.replace(/<b>|<\/b>/g, '').trim()
     }
 
-    rows.push({
-      title,
-      title_hash,
-      publisher,
-      source_url: url,
-      published_at,
-      content,
-    })
+    rows.push({ title, title_hash, publisher, source_url: url, published_at, content })
   }
 
-  // 3) Supabase 저장 (URL 기준 upsert)
+  // 3) 저장 (source_url unique 제약 필요)
   let inserted = 0
-  // upsert를 쓰려면 news_articles 테이블에 unique(source_url) 제약이 있어야 합니다.
   for (const r of rows) {
-    const { error, data } = await supabase
+    const { error } = await supabase
       .from('news_articles')
       .upsert(
         {
@@ -136,12 +128,7 @@ export async function ingestNaverNews(supabase: any) {
       )
       .select('id')
 
-    if (!error && Array.isArray(data) && data.length > 0) {
-      // upsert가 update로 처리돼도 row가 반환되므로,
-      // 신규 건수만 세고 싶다면 conflict 시 DO NOTHING 전략을 택하시거나,
-      // 먼저 존재여부를 체크한 뒤 insert만 하는 방식으로 바꾸세요.
-      inserted++
-    }
+    if (!error) inserted++
   }
 
   return { collected: rows.length, inserted }

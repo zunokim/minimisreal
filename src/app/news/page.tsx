@@ -19,7 +19,7 @@ type NewsRow = {
 
 type ApiResp = { ok: boolean; list: NewsRow[]; publishers: string[] }
 
-const fetcher = (url: string) => fetch(url).then(res => res.json())
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 function ymd(dateISO: string | null) {
   if (!dateISO) return ''
@@ -29,35 +29,37 @@ function ymd(dateISO: string | null) {
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
+
 function hhmm(dateISO: string | null) {
   if (!dateISO) return ''
   const d = new Date(dateISO)
   return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
+
 function topicBadge(count: number) {
   if (count >= 20) return { label: '🔥 High', cls: 'bg-red-100 text-red-700 border-red-200' }
   if (count >= 10) return { label: '⚡ Medium', cls: 'bg-yellow-100 text-yellow-800 border-yellow-200' }
   return { label: '🌱 Low', cls: 'bg-green-100 text-green-700 border-green-200' }
 }
 
-// 입력 키워드를 본문/제목에 <mark>로 하이라이트
+// 키워드 하이라이트
 function highlight(text: string, terms: string[]) {
   if (!text || terms.length === 0) return text
   const escaped = terms
-    .map(t => t.trim())
+    .map((t) => t.trim())
     .filter(Boolean)
-    .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   if (escaped.length === 0) return text
 
   const re = new RegExp(`(${escaped.join('|')})`, 'gi')
   const parts = text.split(re)
   return parts.map((part, i) =>
     re.test(part) ? (
-      // eslint-disable-next-line react/no-array-index-key
-      <mark key={i} className="bg-yellow-200 rounded px-0.5">{part}</mark>
+      <mark key={`m-${i}`} className="bg-yellow-200 rounded px-0.5">
+        {part}
+      </mark>
     ) : (
-      // eslint-disable-next-line react/no-array-index-key
-      <span key={i}>{part}</span>
+      <span key={`t-${i}`}>{part}</span>
     )
   )
 }
@@ -72,8 +74,8 @@ export default function NewsPage() {
     revalidateOnFocus: false,
   })
 
-  const listRaw = data?.ok ? data.list : []
-  const allPublishers = data?.publishers || []
+  const listRaw = useMemo(() => (data?.ok ? data.list : []), [data])
+  const allPublishers = useMemo(() => data?.publishers ?? [], [data])
 
   // 필터링
   const filtered = useMemo(() => {
@@ -81,7 +83,7 @@ export default function NewsPage() {
     const qs = q ? q.split(/\s+/) : []
     const hasPublisherFilter = selectedPublishers.length > 0
 
-    return listRaw.filter(n => {
+    return listRaw.filter((n) => {
       if (hasPublisherFilter) {
         const p = n.publisher || 'Unknown'
         if (!selectedPublishers.includes(p)) return false
@@ -108,14 +110,11 @@ export default function NewsPage() {
     return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1))
   }, [filtered])
 
-  const queryTerms = useMemo(
-    () => query.trim().length ? query.trim().split(/\s+/) : [],
-    [query]
-  )
+  const queryTerms = useMemo(() => (query.trim().length ? query.trim().split(/\s+/) : []), [query])
 
   const togglePublisher = (name: string) => {
-    setSelectedPublishers(prev =>
-      prev.includes(name) ? prev.filter(p => p !== name) : [...prev, name]
+    setSelectedPublishers((prev) =>
+      prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]
     )
   }
 
@@ -139,19 +138,25 @@ export default function NewsPage() {
           {/* 기간 토글 */}
           <div className="inline-flex items-center rounded-lg border bg-white">
             <button
-              className={`px-3 py-1.5 text-sm rounded-l-lg ${days === 1 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`px-3 py-1.5 text-sm rounded-l-lg ${
+                days === 1 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'
+              }`}
               onClick={() => setDays(1)}
             >
               1일
             </button>
             <button
-              className={`px-3 py-1.5 text-sm ${days === 3 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`px-3 py-1.5 text-sm ${
+                days === 3 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'
+              }`}
               onClick={() => setDays(3)}
             >
               3일
             </button>
             <button
-              className={`px-3 py-1.5 text-sm rounded-r-lg ${days === 7 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+              className={`px-3 py-1.5 text-sm rounded-r-lg ${
+                days === 7 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'
+              }`}
               onClick={() => setDays(7)}
             >
               7일
@@ -166,6 +171,18 @@ export default function NewsPage() {
           >
             <RefreshCcw className="h-4 w-4" />
             새로고침
+          </button>
+
+          {/* (개발 편의) 지금 수집 — 필요 없으면 삭제하세요 */}
+          <button
+            onClick={async () => {
+              await fetch('/api/news/fetch', { cache: 'no-store' })
+              mutate()
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
+            title="지금 수집"
+          >
+            수동 수집
           </button>
         </div>
       </div>
