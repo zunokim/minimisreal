@@ -5,13 +5,23 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return '알 수 없는 오류가 발생했습니다.'
+  }
+}
+
 export default function LogoutButton() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const handleLogout = async () => {
-    if (loading) return // 이중 클릭 방지
+    if (loading) return
     setLoading(true)
     setErr(null)
 
@@ -20,16 +30,15 @@ export default function LogoutButton() {
       const { error } = await supabase.auth.signOut()
       if (error) throw error
 
-      // 2) 서버 쿠키 삭제 (네비게이션 직전 전송 보장용 keepalive)
-      await fetch('/api/logout', { method: 'POST', keepalive: true })
+      // 2) 서버 쿠키 삭제 (전송 보장용 keepalive)
+      await fetch('/api/logout', { method: 'POST', keepalive: true, credentials: 'include' })
 
-      // 3) 로그인 페이지로 교체 이동
+      // 3) 로그인 화면으로 이동
       router.replace('/login')
-      // router.refresh() // 필요 시 새로고침까지 원하면 주석 해제
-    } catch (e: any) {
-      console.error(e)
-      setErr(e?.message ?? '로그아웃 중 오류가 발생했습니다.')
-      // 문제가 있어도 보호 라우팅을 깨끗이 하기 위해 로그인으로 보냅니다.
+    } catch (e: unknown) {
+      const msg = toErrorMessage(e)
+      console.error('[logout error]', msg)
+      setErr(msg)
       router.replace('/login')
     } finally {
       setLoading(false)
@@ -50,7 +59,6 @@ export default function LogoutButton() {
         {loading ? '로그아웃 중…' : '로그아웃'}
       </button>
 
-      {/* 선택: 에러 메세지 표시 */}
       {err && (
         <span role="alert" className="text-xs text-red-600">
           {err}
