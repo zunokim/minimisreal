@@ -162,7 +162,7 @@ export default function DataClient() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
-      <h2 className="text-2xl font-bold">Data</h2>
+      <h2 className="text-2xl font-bold">API Data</h2>
 
       {/* 카드 섹션 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

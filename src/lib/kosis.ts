@@ -1,7 +1,6 @@
 // src/lib/kosis.ts
-/* KOSIS 호출 + 정규화 유틸 (데이터/메타 공통) */
+/* KOSIS 호출 + 정규화 유틸 (데이터/메타/파라미터 공통) + 디버그 진단 강화 */
 
-// ---------- 타입 ----------
 type JsonPrimitive = string | number | boolean | null
 type JsonValue = JsonPrimitive | { [k: string]: JsonValue } | JsonValue[]
 
@@ -27,7 +26,6 @@ export interface KosisNormalizedRow {
   raw: JsonValue
 }
 
-// ---------- 공통 유틸 ----------
 function toNumberSafe(v?: string): number {
   if (!v) return 0
   const t = v.trim()
@@ -38,15 +36,20 @@ function toNumberSafe(v?: string): number {
 
 const RAW_API_KEY = process.env.KOSIS_API_KEY ?? ''
 const API_KEY = RAW_API_KEY.trim()
-if (!API_KEY) {
-  // 런타임에 에러로 던지면 라우트 전체가 죽을 수 있어 경고만 남깁니다.
-  console.warn('⚠️ Missing KOSIS_API_KEY')
-}
 
 const KOSIS_DATA_BASE =
   'https://kosis.kr/openapi/Param/statisticsParameterData.do?method=getList'
-const KOSIS_META_BASE =
-  'https://kosis.kr/openapi/statisticsData.do?method=getMeta' // 메타는 /Param 아님!
+
+const KOSIS_META_ENDPOINTS = [
+  'https://kosis.kr/openapi/statisticsData.do?method=getMeta',
+  'https://kosis.kr/openapi/Param/statisticsData.do?method=getMeta',
+] as const
+
+const KOSIS_PARAM_ENDPOINTS = [
+  'https://kosis.kr/openapi/Param/statisticsParameter.do?method=getList',
+  'https://kosis.kr/openapi/statisticsParameter.do?method=getList',
+  'https://kosis.kr/openapi/ParameterList/statisticsParameterList.do',
+] as const
 
 const DEFAULT_HEADERS: HeadersInit = {
   'User-Agent': 'minimisreal/1.0 (+https://minimisreal.vercel.app)',
@@ -55,70 +58,74 @@ const DEFAULT_HEADERS: HeadersInit = {
   Referer: 'https://kosis.kr/openapi/',
 }
 
-// 간단 재시도
-async function fetchWithRetry(url: string, init: RequestInit, tries = 2): Promise<Response> {
-  let lastErr: unknown
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url, { ...init, redirect: 'follow', cache: 'no-store' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res
-    } catch (e) {
-      lastErr = e
-      await new Promise((r) => setTimeout(r, 250))
-    }
+// 텍스트를 느슨히 JSON으로 시도 파싱 + 미리보기 보존
+async function tryFetchJson(url: string, init: RequestInit) {
+  const res = await fetch(url, { ...init, redirect: 'follow', cache: 'no-store' })
+  const text = await res.text()
+  const preview = text.slice(0, 500)
+  return {
+    ok: res.ok,
+    status: res.status,
+    url,
+    textPreview: preview,
+    parsed: (() => {
+      const trimmed = text.trim()
+      if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) return null
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try { return JSON.parse(trimmed) } catch {}
+      }
+      if (/^\s*\{/.test(trimmed)) {
+        try {
+          const fixed = trimmed
+            .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":')
+            .replace(/:\s*'([^']*)'/g, ':"$1"')
+          return JSON.parse(fixed)
+        } catch {}
+      }
+      return null
+    })(),
   }
-  throw lastErr instanceof Error ? lastErr : new Error('fetch failed')
 }
 
-// 느슨한 JSON 파서 (비표준 키/값 & HTML 에러페이지 감지)
-function parseLooseJson(text: string): unknown {
-  const trimmed = text.trim()
-
-  // HTML이면 오류
-  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
-    throw new Error(`Non-JSON response. Preview: ${trimmed.slice(0, 200)}`)
-  }
-
-  // 정상 JSON
-  if (
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  ) {
-    return JSON.parse(trimmed)
-  }
-
-  // 비표준: {TBL_NM:"..."} 같이 키에 쌍따옴표 없음
-  if (/^\s*\{/.test(trimmed)) {
-    const fixed = trimmed
-      .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":') // 키에 쌍따옴표 부여
-      .replace(/:\s*'([^']*)'/g, ':"$1"') // 홑따옴표 값을 쌍따옴표로
-    return JSON.parse(fixed)
-  }
-
-  throw new Error(`Non-JSON response. Preview: ${trimmed.slice(0, 200)}`)
-}
-
-// ---------- 데이터 조회 (기존 이름 유지: fetchKosisData) ----------
+// ---------- 데이터 조회 ----------
 export type KosisParamDataParams = {
   orgId: string
   tblId: string
   prdSe: 'Y' | 'H' | 'Q' | 'M' | 'D' | 'IR' | 'F' | 'S'
   startPrdDe?: string
   endPrdDe?: string
-  itmId?: string // 기본 ALL
-  objL1?: string // 기본 ALL
-  objL2?: string // 필요시
-  objL3?: string // 필요시
+  itmId?: string
+  // 단일/복수 objL 지원
+  objL?: string
+  objL1?: string
+  objL2?: string
+  objL3?: string
+  objL4?: string
+  objL5?: string
+  objL6?: string
+  objL7?: string
+  objL8?: string
+  // 선택 파라미터
+  newEstPrdCnt?: string
   format?: 'json'
 }
 
+// URLSearchParams는 공백을 '+'로 인코딩하므로,
+// 사용자가 '코드1+코드2+' 혹은 '코드1 코드2'로 넘겨도 괜찮게 정규화
+function normalizeListParam(v?: string | null): string | undefined {
+  if (!v) return undefined
+  const s = v.replace(/\+/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!s) return undefined
+  return s
+}
+
 async function _fetchKosisParamData(p: KosisParamDataParams): Promise<KosisRawRow[]> {
+  if (!API_KEY) throw new Error('Missing KOSIS_API_KEY')
+
   const url = new URL(KOSIS_DATA_BASE)
   url.searchParams.set('apiKey', API_KEY)
   url.searchParams.set('format', p.format ?? 'json')
-  url.searchParams.set('jsonVD', 'Y') // JSON 강제
-  // 캐시 변덕 회피
+  url.searchParams.set('jsonVD', 'Y')
   url.searchParams.set('_', Date.now().toString())
 
   url.searchParams.set('orgId', p.orgId)
@@ -126,49 +133,94 @@ async function _fetchKosisParamData(p: KosisParamDataParams): Promise<KosisRawRo
   url.searchParams.set('prdSe', p.prdSe)
   if (p.startPrdDe) url.searchParams.set('startPrdDe', p.startPrdDe)
   if (p.endPrdDe) url.searchParams.set('endPrdDe', p.endPrdDe)
-  url.searchParams.set('itmId', p.itmId ?? 'ALL')
-  if (p.objL1) url.searchParams.set('objL1', p.objL1)
-  if (p.objL2) url.searchParams.set('objL2', p.objL2)
-  if (p.objL3) url.searchParams.set('objL3', p.objL3)
 
-  const res = await fetchWithRetry(url.toString(), { headers: DEFAULT_HEADERS })
-  const txt = await res.text()
-  const parsed = parseLooseJson(txt)
+  // ❗️itmId/objL* 는 "정확한 코드 목록" 필요. ALL 쓰면 표에 따라 실패함.
+  if (p.itmId) url.searchParams.set('itmId', normalizeListParam(p.itmId)!)
+  if (p.objL)  url.searchParams.set('objL',  normalizeListParam(p.objL)!)
+  if (p.objL1) url.searchParams.set('objL1', normalizeListParam(p.objL1)!)
+  if (p.objL2) url.searchParams.set('objL2', normalizeListParam(p.objL2)!)
+  if (p.objL3) url.searchParams.set('objL3', normalizeListParam(p.objL3)!)
+  if (p.objL4) url.searchParams.set('objL4', normalizeListParam(p.objL4)!)
+  if (p.objL5) url.searchParams.set('objL5', normalizeListParam(p.objL5)!)
+  if (p.objL6) url.searchParams.set('objL6', normalizeListParam(p.objL6)!)
+  if (p.objL7) url.searchParams.set('objL7', normalizeListParam(p.objL7)!)
+  if (p.objL8) url.searchParams.set('objL8', normalizeListParam(p.objL8)!)
+  if (p.newEstPrdCnt) url.searchParams.set('newEstPrdCnt', p.newEstPrdCnt)
 
-  if (Array.isArray(parsed)) {
-    return parsed as KosisRawRow[]
+  const trial = await tryFetchJson(url.toString(), { headers: DEFAULT_HEADERS })
+  if (!trial.ok) {
+    throw new Error(`HTTP ${trial.status} @getList :: ${trial.url} :: ${trial.textPreview}`)
   }
 
-  // {err:".."} 형태
+  const parsed = trial.parsed
+  if (Array.isArray(parsed)) return parsed as KosisRawRow[]
   const errObj = parsed as { err?: string; errMsg?: string } | undefined
   if (errObj?.err || errObj?.errMsg) {
     throw new Error(`KOSIS error ${errObj.err ?? ''}: ${errObj.errMsg ?? 'unknown'}`)
   }
-  throw new Error(`KOSIS returned non-array. Preview: ${txt.slice(0, 200)}`)
+  throw new Error(`KOSIS returned non-array @getList :: ${trial.url} :: ${trial.textPreview}`)
 }
 
-/** ✅ 라우트가 기대하는 이름을 그대로 export */
 export async function fetchKosisData(p: KosisParamDataParams): Promise<KosisRawRow[]> {
   return _fetchKosisParamData(p)
 }
 
-// ---------- 메타 조회 ----------
-export async function fetchKosisTableMeta(orgId: string, tblId: string): Promise<unknown> {
-  const url = new URL(KOSIS_META_BASE)
-  url.searchParams.set('apiKey', API_KEY)
-  url.searchParams.set('format', 'json')
-  url.searchParams.set('jsonVD', 'Y')
-  url.searchParams.set('type', 'TBL') // 메타 타입
-  url.searchParams.set('orgId', orgId)
-  url.searchParams.set('tblId', tblId)
-  url.searchParams.set('_', Date.now().toString())
+// ---------- 메타/파라미터(진단) ----------
+export async function fetchKosisTableMeta(
+  orgId: string, tblId: string
+): Promise<{ meta: unknown | null; diagnostics: any[] }> {
+  const diagnostics: any[] = []
+  if (!API_KEY) return { meta: null, diagnostics: [{ error: 'Missing KOSIS_API_KEY' }] }
 
-  const res = await fetchWithRetry(url.toString(), { headers: DEFAULT_HEADERS })
-  const txt = await res.text()
-  return parseLooseJson(txt)
+  for (const base of KOSIS_META_ENDPOINTS) {
+    const u = new URL(base)
+    u.searchParams.set('apiKey', API_KEY)
+    u.searchParams.set('format', 'json')
+    u.searchParams.set('jsonVD', 'Y')
+    u.searchParams.set('type', 'TBL')
+    u.searchParams.set('orgId', orgId)
+    u.searchParams.set('tblId', tblId)
+    u.searchParams.set('_', Date.now().toString())
+
+    const trial = await tryFetchJson(u.toString(), { headers: DEFAULT_HEADERS })
+    diagnostics.push({
+      endpoint: base, status: trial.status, url: trial.url,
+      textPreview: trial.textPreview, parsedType: Array.isArray(trial.parsed) ? 'array' : typeof trial.parsed,
+    })
+    if (trial.ok && trial.parsed != null) return { meta: trial.parsed, diagnostics }
+  }
+  return { meta: null, diagnostics }
 }
 
-// ---------- 정규화 (기존 이름 유지: normalizeKosisRows) ----------
+export async function fetchKosisParameters(
+  orgId: string, tblId: string
+): Promise<{ payload: unknown | null; diagnostics: any[] }> {
+  const diagnostics: any[] = []
+  if (!API_KEY) return { payload: null, diagnostics: [{ error: 'Missing KOSIS_API_KEY' }] }
+
+  for (const base of KOSIS_PARAM_ENDPOINTS) {
+    const u = new URL(base)
+    u.searchParams.set('apiKey', API_KEY)
+    u.searchParams.set('format', 'json')
+    u.searchParams.set('jsonVD', 'Y')
+    u.searchParams.set('orgId', orgId)
+    u.searchParams.set('tblId', tblId)
+    u.searchParams.set('_', Date.now().toString())
+    const trial = await tryFetchJson(u.toString(), { headers: DEFAULT_HEADERS })
+    diagnostics.push({
+      endpoint: base, status: trial.status, url: trial.url,
+      textPreview: trial.textPreview, parsedType: Array.isArray(trial.parsed) ? 'array' : typeof trial.parsed,
+    })
+    if (trial.ok && trial.parsed != null) {
+      const parsed = trial.parsed
+      const payload = Array.isArray(parsed) ? parsed : (parsed as any)?.list ?? (parsed as any)?.LIST ?? parsed
+      return { payload, diagnostics }
+    }
+  }
+  return { payload: null, diagnostics }
+}
+
+// ---------- 데이터 정규화 ----------
 export function normalizeKosisRows(
   rawRows: KosisRawRow[],
   opts: NormalizeOptions
@@ -178,7 +230,7 @@ export function normalizeKosisRows(
   const rows: KosisNormalizedRow[] = rawRows.map((r) => {
     const prd_se = r.PRD_SE ?? ''
     const prd_de = r.PRD_DE ?? ''
-    const itm_id = (r.ITM_ID ?? 'ALL').trim()
+    const itm_id = (r.ITM_ID ?? '').trim()
     const itm_name = (r.ITM_NM ?? '항목').trim()
     const unit = (r.UNIT_NM ?? '').trim()
     const value = toNumberSafe(r.DT)
@@ -197,7 +249,6 @@ export function normalizeKosisRows(
       region_code = c1
       region_name = c1_nm || c1 || '(C1)'
     } else if (regionKey === 'C2') {
-      // 시군구는 시도+시군구 복합키로 충돌 방지
       region_code = `${c1}|${c2}`
       region_name = c2_nm ? (c1_nm ? `${c1_nm} ${c2_nm}` : c2_nm) : (c1_nm || '(C2)')
     } else if (regionKey === 'C3') {
@@ -205,7 +256,7 @@ export function normalizeKosisRows(
       region_name = [c1_nm, c2_nm, c3_nm].filter(Boolean).join(' ')
     } else {
       const ck = r[regionKey] ?? ''
-      const ckn = r[`${regionKey}_NM`] ?? ''
+      const ckn = (r as any)[`${regionKey}_NM`] ?? ''
       region_code = ck
       region_name = ckn || ck || '(REGION)'
     }
@@ -225,7 +276,6 @@ export function normalizeKosisRows(
     }
   })
 
-  // 중복 제거 (UPSERT 충돌 방지)
   const dedup = new Map<string, KosisNormalizedRow>()
   for (const row of rows) {
     const key = `${row.org_id}|${row.tbl_id}|${row.prd_de}|${row.region_code}|${row.itm_id}`
