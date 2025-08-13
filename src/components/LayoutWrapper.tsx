@@ -7,18 +7,29 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import LogoutButton from '@/components/LogoutButton'
 
+// lucide-react 아이콘
+import { Home, FileText, BarChart3, Settings } from 'lucide-react'
+
+type NavItem = { name: string; href: string; icon: React.ReactNode }
+
+const navItems: NavItem[] = [
+  { name: 'Home',  href: '/',      icon: <Home className="w-4 h-4" /> },
+  { name: 'Board', href: '/board', icon: <FileText className="w-4 h-4" /> },
+  { name: 'Data',  href: '/data',  icon: <BarChart3 className="w-4 h-4" /> },
+  { name: 'Etc',   href: '/etc',   icon: <Settings className="w-4 h-4" /> },
+]
+
 export default function LayoutWrapper({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const isLoginPage = pathname.startsWith('/login')
-  const [menuOpen, setMenuOpen] = useState(false)
 
-  // ✅ 프로필(이름/이메일)
+  // ✅ 상태
+  const [menuOpen, setMenuOpen] = useState(false)
   const [displayName, setDisplayName] = useState<string>('')
   const [email, setEmail] = useState<string>('')
-
-  // 로딩 상태 (문구 깜빡임 방지)
   const [loadingProfile, setLoadingProfile] = useState<boolean>(true)
 
+  // ✅ 프로필 로드
   const loadProfile = async () => {
     setLoadingProfile(true)
     const {
@@ -69,7 +80,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
     setMenuOpen(false)
   }, [pathname])
 
-  // 이니셜 생성
+  // 이니셜
   const initials = useMemo(() => {
     const base = displayName || email || ''
     if (!base) return ''
@@ -87,6 +98,17 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
     return ''
   }, [displayName, email, loadingProfile])
 
+  // ✅ 활성 경로 매핑 (항상 훅을 동일 순서로 호출하기 위해 조기 return "위"에 위치)
+  const activeMap = useMemo(() => {
+    const map: Record<string, boolean> = {}
+    navItems.forEach((it) => {
+      map[it.href] =
+        pathname === it.href ||
+        (it.href !== '/' && pathname.startsWith(it.href + '/'))
+    })
+    return map
+  }, [pathname])
+
   // 로그인 페이지만 중앙 정렬
   if (isLoginPage) {
     return (
@@ -103,7 +125,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
         <div className="h-full px-4 md:px-6 flex items-center justify-between gap-3">
           {/* 좌측: 타이틀 */}
           <h1 className="font-bold truncate text-[clamp(16px,3.5vw,20px)]">
-            Code_31020
+            31020_LAB
           </h1>
 
           {/* 우측: 환영문구(데스크탑) + 로그아웃 + 햄버거 */}
@@ -125,7 +147,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
                   >
                     {initials || 'U'}
                   </div>
-                  {/* 환영 텍스트 - 이름/이메일만 클릭 가능 (가시성 강화) */}
+                  {/* 환영 텍스트 */}
                   <span className="text-[13px] font-medium text-gray-700">
                     <Link
                       href="/account"
@@ -161,13 +183,44 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
       {/* 헤더 높이만큼 여백 */}
       <div className="pt-16 flex min-h-screen">
         {/* 좌측 사이드바 — 데스크탑 */}
-        <aside className="hidden md:block w-56 bg-gray-100 p-4 border-r">
-          <nav className="flex flex-col gap-4 font-bold">
-            <Link href="/">🏠 Home</Link>
-            <Link href="/board">📝 Board</Link>
-            <Link href="/data">📊 Data</Link>
-            <Link href="/etc">⚙️ Etc</Link>
+        <aside className="hidden md:flex w-64 border-r bg-white flex-col">
+          <nav className="px-3 py-4 flex-1">
+            <ul className="space-y-1">
+              {navItems.map((it) => {
+                const active = !!activeMap[it.href]
+                return (
+                  <li key={it.href}>
+                    <Link
+                      href={it.href}
+                      aria-current={active ? 'page' : undefined}
+                      className={[
+                        'group flex items-center gap-2 rounded-lg px-3 py-2 text-sm border transition-all',
+                        active
+                          ? 'bg-gray-100 border-gray-300 text-black'
+                          : 'bg-white border-transparent text-gray-700 hover:bg-gray-50 hover:border-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300',
+                      ].join(' ')}
+                    >
+                      {it.icon}
+                      <span className="font-medium">{it.name}</span>
+
+                      {/* 활성 표시 바 */}
+                      <span
+                        className={[
+                          'ml-auto h-4 w-1 rounded-full',
+                          active ? 'bg-black' : 'bg-transparent group-hover:bg-gray-300',
+                        ].join(' ')}
+                      />
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
           </nav>
+
+          {/* 하단 푸터 */}
+          <div className="border-t px-4 py-3 text-[11px] text-gray-400">
+            2025 miniMIS by zuno
+          </div>
         </aside>
 
         {/* 본문 */}
@@ -185,7 +238,7 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
         />
       )}
 
-      {/* 모바일: 우측 슬라이드 메뉴 + 하단 프로필 */}
+      {/* 모바일: 우측 슬라이드 메뉴 + 하단 푸터 */}
       <aside
         className={[
           'fixed top-16 right-0 h-[calc(100vh-64px)] w-64 bg-white border-l shadow-xl md:hidden z-50',
@@ -193,34 +246,37 @@ export default function LayoutWrapper({ children }: { children: ReactNode }) {
           menuOpen ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
       >
-        <nav className="flex flex-col gap-4 font-bold p-4">
-          <Link href="/" onClick={() => setMenuOpen(false)}>🏠 Home</Link>
-          <Link href="/board" onClick={() => setMenuOpen(false)}>📝 Board</Link>
-          <Link href="/data" onClick={() => setMenuOpen(false)}>📊 Data</Link>
-          <Link href="/etc" onClick={() => setMenuOpen(false)}>⚙️ Etc</Link>
+        <nav className="flex flex-col gap-2 font-semibold p-4 flex-1">
+          {navItems.map((it) => {
+            const active = !!activeMap[it.href]
+            return (
+              <Link
+                key={it.href}
+                href={it.href}
+                onClick={() => setMenuOpen(false)}
+                aria-current={active ? 'page' : undefined}
+                className={[
+                  'group flex items-center gap-2 rounded-lg px-3 py-2 text-sm border transition-all',
+                  active
+                    ? 'bg-gray-100 border-gray-300 text-black'
+                    : 'bg-white border-transparent text-gray-700 hover:bg-gray-50 hover:border-gray-200',
+                ].join(' ')}
+              >
+                {it.icon}
+                <span>{it.name}</span>
+                <span
+                  className={[
+                    'ml-auto h-4 w-1 rounded-full',
+                    active ? 'bg-black' : 'bg-transparent group-hover:bg-gray-300',
+                  ].join(' ')}
+                />
+              </Link>
+            )
+          })}
         </nav>
 
-        {/* 📇 프로필(모바일 전용 표기) */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t text-sm text-gray-600 md:hidden">
-          {(displayName || email) ? (
-            <>
-              <div className="font-semibold">
-                <Link
-                  href="/account"
-                  onClick={() => setMenuOpen(false)}
-                  className="text-blue-600 font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded-sm px-0.5"
-                  title="프로필/비밀번호 변경"
-                >
-                  {displayName || email}
-                </Link>
-              </div>
-              {displayName && email && (
-                <div className="text-xs text-gray-500 mt-0.5">{email}</div>
-              )}
-            </>
-          ) : (
-            <div className="font-semibold">로그인 정보 없음</div>
-          )}
+        <div className="border-t px-4 py-3 text-[11px] text-gray-400">
+          2025 miniMIS by zuno
         </div>
       </aside>
     </>
