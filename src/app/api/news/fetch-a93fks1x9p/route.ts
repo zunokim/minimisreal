@@ -1,11 +1,11 @@
 // src/app/api/news/fetch-a93fks1x9p/route.ts
 import { NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabaseClient'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { ingestNaverNews } from '@/lib/news/ingestNaver'
 
 export async function GET() {
   try {
-    const result = await ingestNaverNews(supabase)
+    const result = await ingestNaverNews(supabaseAdmin)
     return NextResponse.json({ ok: true, via: 'cron', ...result })
   } catch (err) {
     console.error('[news fetch cron]', err)

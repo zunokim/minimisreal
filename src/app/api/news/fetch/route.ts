@@ -1,11 +1,11 @@
 // src/app/api/news/fetch/route.ts
 import { NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabaseClient'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { ingestNaverNews } from '@/lib/news/ingestNaver'
 
 export async function GET() {
   try {
-    const result = await ingestNaverNews(supabase)
+    const result = await ingestNaverNews(supabaseAdmin)
     return NextResponse.json({ ok: true, via: 'manual', ...result })
   } catch (err) {
     console.error('[news fetch manual]', err)

@@ -1,6 +1,6 @@
 // src/app/api/news/list/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabaseClient'
+import { supabaseAdmin  } from '@/lib/supabaseAdmin'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,10 +28,10 @@ export async function GET(req: NextRequest) {
     const since = new Date()
     since.setDate(since.getDate() - days)
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('news_articles')
       .select('id, title, content, publisher, source_url, published_at, fetched_at')
-      .gte('published_at', since.toISOString())
+      .or(`published_at.gte.${since.toISOString()},published_at.is.null`) // ← 발행일이 null인 기사도 임시 포함
       .order('published_at', { ascending: false })
       .limit(800)
 
