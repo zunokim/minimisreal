@@ -1,0 +1,16 @@
+// src/app/api/news/fetch-a93fks1x9p/route.ts
+import { NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabaseClient'
+import { ingestNaverNews } from '@/lib/news/ingestNaver'
+
+export async function GET() {
+  try {
+    const result = await ingestNaverNews(supabase)
+    return NextResponse.json({ ok: true, via: 'cron', ...result })
+  } catch (err) {
+    console.error('[news fetch cron]', err)
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
+  }
+}
+
+export const dynamic = 'force-dynamic'
