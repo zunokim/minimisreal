@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/lib/kosis.ts
 /* KOSIS 호출 + 정규화 유틸 (데이터/메타/파라미터 공통) + 디버그 진단 강화 */
 
@@ -218,6 +219,20 @@ export async function fetchKosisParameters(
     }
   }
   return { payload: null, diagnostics }
+}
+
+// ---------- 파라미터 payload 정규화 (메타 페이지/빌더에서 사용) ----------
+/** KOSIS 파라미터 응답의 다양한 포맷을 최대한 평탄화해서 돌려줍니다. */
+export function normalizeParameterPayload(payload: unknown): unknown {
+  if (payload == null) return null
+  if (Array.isArray(payload)) return payload
+  if (typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>
+    if (Array.isArray(obj.list)) return obj.list
+    if (Array.isArray((obj as any).LIST)) return (obj as any).LIST
+    return obj
+  }
+  return payload
 }
 
 // ---------- 데이터 정규화 ----------

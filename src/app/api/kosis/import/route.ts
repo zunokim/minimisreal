@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/app/api/kosis/import/route.ts
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
@@ -98,9 +99,8 @@ export async function GET(req: Request) {
     const userObjL8  = sanitizeListParam(searchParams.get('objL8'))
     const newEstPrdCnt = sanitizeListParam(searchParams.get('newEstPrdCnt'))
 
-    // 데이터셋별 기본값(없으면 그대로 undefined → KOSIS가 에러 주면 그때 교정)
+    // 데이터셋별 기본값
     const defaultsFor: Partial<Record<DatasetKey, Partial<KosisParamDataParams>>> = {
-      // 기존 unsold/hcsi는 ALL 허용 표(이미 정상 동작하던 구성)
       hcsi: {
         itmId: userItmId ?? 'ALL',
         objL1: userObjL1 ?? 'ALL',
@@ -113,13 +113,12 @@ export async function GET(req: Request) {
         objL2: userObjL2 ?? 'ALL',
         objL3: userObjL3 ?? undefined,
       },
-      // 공사완료후 미분양: 주신 고정 코드 기본값(민간/전국/예시 세부값)
       unsold_after: {
         itmId: userItmId ?? '13103871088T1',
         objL1: userObjL1 ?? '13102871088A.0001', // 전국
         objL2: userObjL2 ?? '13102871088B.0001', // 민간부문
-        objL3: userObjL3 ?? '13102871088C.0001 13102871088C.0003', // 예시(복수 가능)
-        objL4: userObjL4 ?? '13102871088D.0003', // 예시
+        objL3: userObjL3 ?? '13102871088C.0001 13102871088C.0003',
+        objL4: userObjL4 ?? '13102871088D.0003',
         objL5: userObjL5 ?? undefined,
         objL6: userObjL6 ?? undefined,
         objL7: userObjL7 ?? undefined,
@@ -130,9 +129,9 @@ export async function GET(req: Request) {
     const baseDefaults = defaultsFor[dataset] ?? {}
 
     const attempts: Array<{ scope: string; ok: boolean; error?: string; count?: number; usedParams?: Partial<KosisParamDataParams> }> = []
-    const allRows: any[] = []
+    const allRows: unknown[] = []
 
-    // 월별 호출(대용량 회피, 에러/HTML 응답은 lib/kosis가 처리)
+    // 월별 호출
     for (const ym of months) {
       const params: KosisParamDataParams = {
         orgId,
@@ -156,7 +155,7 @@ export async function GET(req: Request) {
       }
 
       try {
-        const rows = await fetchKosisData(params) // ← 느슨한 파서 사용 (HTML/비표준 JSON 방어)
+        const rows = await fetchKosisData(params)
         const count = Array.isArray(rows) ? rows.length : 0
         allRows.push(...(rows ?? []))
         attempts.push({ scope: ym, ok: true, count, usedParams: { ...params } })
@@ -170,7 +169,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // 정규화 → (dryRun이면 미리보기만)
+    // 정규화
     const normalized = normalizeKosisRows(allRows as any[], {
       orgId,
       tblId,
