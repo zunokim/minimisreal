@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import {
-  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon
+  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon, X as XIcon, Calendar as CalendarIcon
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -36,7 +36,7 @@ type ListResp = { ok: boolean; list: NewsRow[]; publishers: string[] }
 type TrendPoint = {
   date: string
   total: number
-  // 키워드별 시리즈가 동적으로 들어오므로 인덱스 시그니처 허용
+  // 동적 키워드 시리즈
   [keyword: string]: string | number
 }
 
@@ -64,7 +64,7 @@ function hhmm(dateISO: string | null) {
   return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
 
-// 방어적인 배지 계산
+// 토픽 배지
 function topicBadge(countInput: unknown) {
   const n = typeof countInput === 'number' ? countInput : 0
   if (n >= 20) return { label: '🔥 High', cls: 'bg-red-100 text-red-700 border-red-200' }
@@ -94,21 +94,16 @@ function highlight(text: string, terms: string[]) {
   )
 }
 
-/** ──────────────────────────────────────────────────────────────────
- *  모바일 친화 툴팁 (any 제거: 명시적 타입 정의)
- *  Recharts의 내부 타입을 그대로 쓰지 않고, 실제로 사용하는 최소 형태로 정의
- *  ────────────────────────────────────────────────────────────────── */
+// ── 모바일 친화 툴팁
 type TrendTooltipItem = {
   dataKey?: string | number
   value?: number | string
   payload?: TrendPoint
 }
-
 type TrendTooltipProps = {
   active?: boolean
   payload?: TrendTooltipItem[]
 }
-
 function CustomTooltip(props: TrendTooltipProps) {
   const { active, payload } = props
   if (!active || !payload || payload.length === 0) return null
@@ -128,32 +123,19 @@ function CustomTooltip(props: TrendTooltipProps) {
         {String(dateLabel)}
       </div>
 
-      {typeof totalItem?.value === 'number' || typeof totalItem?.value === 'string' ? (
+      {typeof totalItem?.value !== 'undefined' && (
         <div className="mt-1 flex items-center gap-2 text-xs sm:text-sm">
-          <span
-            className="inline-block h-2 w-2 rounded-sm"
-            style={{ background: '#fed7aa' }}
-          />
+          <span className="inline-block h-2 w-2 rounded-sm" style={{ background: '#fed7aa' }} />
           <span className="text-gray-600">기사 수</span>
-          <span className="ml-auto font-medium text-gray-900">
-            {totalItem.value}
-          </span>
+          <span className="ml-auto font-medium text-gray-900">{totalItem.value}</span>
         </div>
-      ) : null}
+      )}
 
       {termItems.map((it) => (
-        <div
-          key={String(it.dataKey)}
-          className="mt-0.5 flex items-center gap-2 text-xs sm:text-sm"
-        >
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: '#f97316' }}
-          />
+        <div key={String(it.dataKey)} className="mt-0.5 flex items-center gap-2 text-xs sm:text-sm">
+          <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#f97316' }} />
           <span className="truncate text-gray-600">{String(it.dataKey)}</span>
-          <span className="ml-auto font-medium text-gray-900">
-            {it.value}
-          </span>
+          <span className="ml-auto font-medium text-gray-900">{it.value}</span>
         </div>
       ))}
     </div>
@@ -162,6 +144,7 @@ function CustomTooltip(props: TrendTooltipProps) {
 
 export default function NewsPage() {
   const [days, setDays] = useState<1 | 3 | 7>(3)
+  const [selectedDate, setSelectedDate] = useState<string>('') // YYYY-MM-DD
 
   // 키워드: 쉼표(,) 구분 (트렌드), 리스트 필터는 공백/쉼표 모두 AND 처리
   const [query, setQuery] = useState('한화투자증권')
@@ -169,18 +152,22 @@ export default function NewsPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [showPublishers, setShowPublishers] = useState(false) // 기본: 접힘
 
-  // 목록
-  const { data, isLoading, mutate } = useSWR<ListResp>(
-    `/api/news/list?days=${days}`, fetcher, { refreshInterval: 0, revalidateOnFocus: false }
-  )
+  // 목록 SWR 키: 날짜가 지정되면 date 우선, 아니면 days
+  const listKey = useMemo(() => {
+    return selectedDate
+      ? `/api/news/list?date=${encodeURIComponent(selectedDate)}`
+      : `/api/news/list?days=${days}`
+  }, [selectedDate, days])
+
+  const { data, isLoading, mutate } = useSWR<ListResp>(listKey, fetcher, {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+  })
   const listRaw = useMemo(() => (data?.ok ? data.list : []), [data])
   const allPublishers = useMemo(() => data?.publishers ?? [], [data])
 
-  // 트렌드
-  const trendTerms = useMemo(
-    () => query.split(',').map(s => s.trim()).filter(Boolean),
-    [query]
-  )
+  // 트렌드: 날짜 선택과 무관하게 기존 days 기준 유지 (요청사항은 "특정 일자 기사 보기"였으므로)
+  const trendTerms = useMemo(() => query.split(',').map(s => s.trim()).filter(Boolean), [query])
   const trendDays = Math.max(Number(days), 7)
   const trendKey = useMemo(
     () => `/api/news/trend?days=${trendDays}&terms=${encodeURIComponent(trendTerms.join(','))}`,
@@ -188,7 +175,7 @@ export default function NewsPage() {
   )
   const { data: trend } = useSWR<TrendResp>(trendKey, fetcher, { refreshInterval: 0, revalidateOnFocus: false })
 
-  // 리스트 필터링
+  // 리스트 필터링(언론사/키워드)
   const filtered = useMemo(() => {
     const qs = query
       .split(',')
@@ -243,6 +230,8 @@ export default function NewsPage() {
     setQuery('한화투자증권')
   }
 
+  const clearDate = () => setSelectedDate('')
+
   // 수동 수집 + Δrows 배너
   const manualIngest = async () => {
     setNotice(null)
@@ -294,26 +283,52 @@ export default function NewsPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* 기간 토글 (모바일 글자 줄바꿈/깨짐 방지) */}
+          {/* 기간 토글 (모바일 줄바꿈 방지) */}
           <div className="inline-flex items-center rounded-lg border bg-white overflow-hidden">
             <button
               className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm whitespace-nowrap ${days === 1 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
               onClick={() => setDays(1)}
+              disabled={!!selectedDate}
+              title={selectedDate ? '특정 일자 선택 시 비활성화' : undefined}
             >
               1일
             </button>
             <button
               className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm whitespace-nowrap ${days === 3 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
               onClick={() => setDays(3)}
+              disabled={!!selectedDate}
+              title={selectedDate ? '특정 일자 선택 시 비활성화' : undefined}
             >
               3일
             </button>
             <button
               className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm whitespace-nowrap ${days === 7 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
               onClick={() => setDays(7)}
+              disabled={!!selectedDate}
+              title={selectedDate ? '특정 일자 선택 시 비활성화' : undefined}
             >
               7일
             </button>
+          </div>
+
+          {/* 날짜 선택 */}
+          <div className="inline-flex items-center gap-2 rounded-lg border bg-white px-2.5 sm:px-3 py-1.5">
+            <CalendarIcon className="h-4 w-4 text-gray-500" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="text-xs sm:text-sm outline-none bg-transparent"
+            />
+            {selectedDate && (
+              <button
+                onClick={clearDate}
+                className="rounded p-0.5 hover:bg-gray-100"
+                title="날짜 지우기"
+              >
+                <XIcon className="h-4 w-4 text-gray-500" />
+              </button>
+            )}
           </div>
 
           {/* 새로고침 */}
@@ -347,7 +362,7 @@ export default function NewsPage() {
       {/* 검색/필터 바 */}
       <div className="rounded-xl border bg-white p-3 md:p-4 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-          {/* 키워드 입력 (쉼표로 다중 키워드) */}
+          {/* 키워드 입력 */}
           <label className="flex items-center gap-2 flex-1">
             <Search className="h-4 w-4 text-gray-500" />
             <input
@@ -358,7 +373,7 @@ export default function NewsPage() {
             />
           </label>
 
-          {/* 언론사 필터 토글 (기본 접힘) */}
+          {/* 언론사 필터 토글 */}
           <button
             onClick={() => setShowPublishers(v => !v)}
             className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm whitespace-nowrap hover:bg-gray-50"
@@ -379,7 +394,7 @@ export default function NewsPage() {
           </button>
         </div>
 
-        {/* 언론사 필터 패널 (접기/펼치기) */}
+        {/* 언론사 필터 패널 */}
         {showPublishers && (
           <div id="publisher-filter-panel" className="mt-3 flex flex-wrap gap-2">
             {allPublishers.map((p) => {
@@ -406,7 +421,7 @@ export default function NewsPage() {
         )}
       </div>
 
-      {/* 트렌드 차트 (주황 라인 + 연한 주황 막대 + 모바일 툴팁 + 바 라벨) */}
+      {/* 트렌드 차트 */}
       <section className="rounded-xl border bg-white p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <LineChartIcon className="h-4 w-4 text-gray-600" />
@@ -424,30 +439,21 @@ export default function NewsPage() {
               <Tooltip content={<CustomTooltip />} />
               <Legend />
 
-              {/* 일별 기사 건수: 막대 (연한 주황), 테두리 없음, 라벨 표시 */}
-              <Bar
-                dataKey="total"
-                fill="#fed7aa"         // orange-200
-                legendType="none"      // 범례 숨김 (보조용 시각화)
-                radius={[4, 4, 0, 0]}  // 상단 라운드
-              >
-                <LabelList
-                  dataKey="total"
-                  position="top"
-                  style={{ fill: '#6b7280', fontSize: 10 }} // gray-500
-                />
+              {/* total 막대 (연한 주황) + 라벨 */}
+              <Bar dataKey="total" fill="#fed7aa" legendType="none" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="total" position="top" style={{ fill: '#6b7280', fontSize: 10 }} />
               </Bar>
 
-              {/* 키워드 라인: 주황 + 표식(점) 표시 */}
+              {/* 키워드 라인(주황, 표식) */}
               {(trend?.terms || []).map((t) => (
                 <Line
                   key={t}
                   type="monotone"
                   dataKey={t}
-                  stroke="#f97316"                           // orange-500
+                  stroke="#f97316"
                   strokeWidth={2}
-                  dot={{ r: 3, stroke: '#f97316', fill: '#f97316' }}       // 표식
-                  activeDot={{ r: 5, stroke: '#f97316', fill: '#f97316' }} // hover 시 강조
+                  dot={{ r: 3, stroke: '#f97316', fill: '#f97316' }}
+                  activeDot={{ r: 5, stroke: '#f97316', fill: '#f97316' }}
                 />
               ))}
             </ComposedChart>
@@ -474,7 +480,7 @@ export default function NewsPage() {
       {/* 빈 상태 */}
       {!isLoading && grouped.length === 0 && (
         <div className="rounded-xl border bg-white p-8 shadow-sm text-center text-gray-600">
-          조건에 맞는 기사가 없습니다.
+          {selectedDate ? `${selectedDate} 기사 없음` : '조건에 맞는 기사가 없습니다.'}
         </div>
       )}
 
@@ -496,11 +502,7 @@ export default function NewsPage() {
                 <li key={n.id} className="py-3">
                   <div className="flex flex-col gap-1">
                     {/* 제목 */}
-                    <Link
-                      href={n.source_url}
-                      target="_blank"
-                      className="font-medium hover:underline break-words"
-                    >
+                    <Link href={n.source_url} target="_blank" className="font-medium hover:underline break-words">
                       {highlight(n.title, queryTerms)}
                       <ExternalLink className="inline ml-1 h-3.5 w-3.5 align-[-2px]" />
                     </Link>
