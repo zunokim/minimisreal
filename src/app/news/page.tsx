@@ -19,7 +19,6 @@ import {
   Legend,
   LabelList,
 } from 'recharts'
-import type { TooltipProps as RechartsTooltipProps } from 'recharts'
 
 type NewsRow = {
   id: string
@@ -33,11 +32,19 @@ type NewsRow = {
 }
 
 type ListResp = { ok: boolean; list: NewsRow[]; publishers: string[] }
+
+type TrendPoint = {
+  date: string
+  total: number
+  // 키워드별 시리즈가 동적으로 들어오므로 인덱스 시그니처 허용
+  [keyword: string]: string | number
+}
+
 type TrendResp = {
   ok: boolean
   days: number
   terms: string[]
-  series: Array<Record<string, number | string>>
+  series: TrendPoint[]
 }
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -87,15 +94,27 @@ function highlight(text: string, terms: string[]) {
   )
 }
 
-/** 모바일 친화 툴팁 (타입 안전하게 label 추출) */
-function CustomTooltip(props: RechartsTooltipProps<any, any>) {
+/** ──────────────────────────────────────────────────────────────────
+ *  모바일 친화 툴팁 (any 제거: 명시적 타입 정의)
+ *  Recharts의 내부 타입을 그대로 쓰지 않고, 실제로 사용하는 최소 형태로 정의
+ *  ────────────────────────────────────────────────────────────────── */
+type TrendTooltipItem = {
+  dataKey?: string | number
+  value?: number | string
+  payload?: TrendPoint
+}
+
+type TrendTooltipProps = {
+  active?: boolean
+  payload?: TrendTooltipItem[]
+}
+
+function CustomTooltip(props: TrendTooltipProps) {
   const { active, payload } = props
   if (!active || !payload || payload.length === 0) return null
 
-  const dateLabel =
-    (props as any).label ??
-    (payload?.[0]?.payload?.date as string | number | undefined) ??
-    ''
+  const first = payload[0]
+  const dateLabel = first?.payload?.date ?? ''
 
   const totalItem = payload.find((p) => p.dataKey === 'total')
   const termItems = payload.filter((p) => p.dataKey !== 'total')
@@ -109,7 +128,7 @@ function CustomTooltip(props: RechartsTooltipProps<any, any>) {
         {String(dateLabel)}
       </div>
 
-      {totalItem && (
+      {typeof totalItem?.value === 'number' || typeof totalItem?.value === 'string' ? (
         <div className="mt-1 flex items-center gap-2 text-xs sm:text-sm">
           <span
             className="inline-block h-2 w-2 rounded-sm"
@@ -117,10 +136,10 @@ function CustomTooltip(props: RechartsTooltipProps<any, any>) {
           />
           <span className="text-gray-600">기사 수</span>
           <span className="ml-auto font-medium text-gray-900">
-            {totalItem.value as number}
+            {totalItem.value}
           </span>
         </div>
-      )}
+      ) : null}
 
       {termItems.map((it) => (
         <div
@@ -133,7 +152,7 @@ function CustomTooltip(props: RechartsTooltipProps<any, any>) {
           />
           <span className="truncate text-gray-600">{String(it.dataKey)}</span>
           <span className="ml-auto font-medium text-gray-900">
-            {it.value as number}
+            {it.value}
           </span>
         </div>
       ))}
