@@ -1,3 +1,4 @@
+// src/app/news/page.tsx
 'use client'
 
 import { useMemo, useState } from 'react'
@@ -18,7 +19,7 @@ import {
   Legend,
   LabelList,
 } from 'recharts'
-import type { TooltipProps } from 'recharts'
+import type { TooltipProps as RechartsTooltipProps } from 'recharts'
 
 type NewsRow = {
   id: string
@@ -86,16 +87,16 @@ function highlight(text: string, terms: string[]) {
   )
 }
 
-/** 모바일 친화 툴팁 */
-function CustomTooltip({
-  active,
-  label,
-  payload,
-}: TooltipProps<number, string>) {
+/** 모바일 친화 툴팁 (타입 안전하게 label 추출) */
+function CustomTooltip(props: RechartsTooltipProps<any, any>) {
+  const { active, payload } = props
   if (!active || !payload || payload.length === 0) return null
 
-  // payload: [{ dataKey: 'total', value: 12, color: ..., ... }, { dataKey: '한화투자증권', value: 7, ... }, ...]
-  // total 우선, 그 뒤 키워드들
+  const dateLabel =
+    (props as any).label ??
+    (payload?.[0]?.payload?.date as string | number | undefined) ??
+    ''
+
   const totalItem = payload.find((p) => p.dataKey === 'total')
   const termItems = payload.filter((p) => p.dataKey !== 'total')
 
@@ -105,7 +106,7 @@ function CustomTooltip({
       style={{ pointerEvents: 'none' }}
     >
       <div className="text-xs sm:text-sm font-semibold text-gray-800">
-        {label}
+        {String(dateLabel)}
       </div>
 
       {totalItem && (
@@ -269,12 +270,12 @@ export default function NewsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">News</h1>
           <p className="text-sm text-gray-500 mt-1">
-            ‘한화투자증권’ 최신 뉴스
+            ‘한화투자증권’ 최신 뉴스 (중복 제거 · 요약 프리뷰 · 필터/하이라이트 · 트렌드)
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* 기간 토글 */}
+          {/* 기간 토글 (모바일 글자 줄바꿈/깨짐 방지) */}
           <div className="inline-flex items-center rounded-lg border bg-white overflow-hidden">
             <button
               className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm whitespace-nowrap ${days === 1 ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
@@ -386,7 +387,7 @@ export default function NewsPage() {
         )}
       </div>
 
-      {/* 트렌드 차트 (주황 라인 + 연한 주황 막대 + 모바일 친화 툴팁 + 바 라벨) */}
+      {/* 트렌드 차트 (주황 라인 + 연한 주황 막대 + 모바일 툴팁 + 바 라벨) */}
       <section className="rounded-xl border bg-white p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <LineChartIcon className="h-4 w-4 text-gray-600" />
@@ -408,7 +409,6 @@ export default function NewsPage() {
               <Bar
                 dataKey="total"
                 fill="#fed7aa"         // orange-200
-                // stroke 미지정 → 테두리 없음
                 legendType="none"      // 범례 숨김 (보조용 시각화)
                 radius={[4, 4, 0, 0]}  // 상단 라운드
               >
