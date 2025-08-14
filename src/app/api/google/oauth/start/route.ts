@@ -1,18 +1,18 @@
 // src/app/api/google/oauth/start/route.ts
-import { NextResponse } from 'next/server'
-import { getOAuthClient, CALENDAR_SCOPES } from '@/lib/google'
+import { NextResponse, NextRequest } from 'next/server'
+import { getOAuthClient } from '@/lib/google'
 
-export async function GET() {
+export async function GET(_req: NextRequest) {
   try {
     const oauth2Client = getOAuthClient()
     const url = oauth2Client.generateAuthUrl({
       access_type: 'offline',
-      scope: CALENDAR_SCOPES,
       prompt: 'consent',
+      scope: ['https://www.googleapis.com/auth/calendar'],
     })
     return NextResponse.redirect(url)
-  } catch (e: any) {
-    console.error('[oauth/start] error:', e)
-    return NextResponse.json({ error: e?.message || 'oauth_start_failed' }, { status: 500 })
+  } catch (e: unknown) {
+    const msg = (e as Error).message || 'oauth_start_failed'
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

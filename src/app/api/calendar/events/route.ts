@@ -1,52 +1,49 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { google, calendar_v3 } from 'googleapis';
-import { getOAuthClient } from '@/lib/google';
-import { supabaseAdmin } from '@/lib/supabaseAdmin';
+// src/app/api/calendar/events/route.ts
+import { NextRequest, NextResponse } from 'next/server'
+import { google, calendar_v3 } from 'googleapis'
+import { getOAuthClient } from '@/lib/google'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
-type CreatePayload = {
-  title: string;
-  description?: string;
-  location?: string;
-  start: string;
-  end?: string;
-  allDay: boolean;
-};
+type CreateEventBody = {
+  title: string
+  start: string
+  end?: string
+  allDay?: boolean
+  description?: string
+  location?: string
+}
 
-async function getAuthedCalendar() {
+async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
   const { data, error } = await supabaseAdmin
     .from('google_oauth_tokens')
     .select('*')
     .eq('label', 'shared')
-    .single();
+    .single()
 
-  if (error || !data) throw new Error('Google not connected');
+  if (error || !data) throw new Error('Google not connected')
 
-  const oauth2Client = getOAuthClient();
+  const oauth2Client = getOAuthClient()
   oauth2Client.setCredentials({
     access_token: data.access_token || undefined,
     refresh_token: data.refresh_token || undefined,
     scope: data.scope || undefined,
     token_type: data.token_type || undefined,
     expiry_date: data.expiry_date || undefined,
-  });
+  })
 
-  return google.calendar({ version: 'v3', auth: oauth2Client });
+  return google.calendar({ version: 'v3', auth: oauth2Client })
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const cal = await getAuthedCalendar();
-    const { searchParams } = new URL(req.url);
+    const cal = await getAuthedCalendar()
+    const { searchParams } = new URL(req.url)
     const timeMin =
-      searchParams.get('timeMin') ||
-      new Date(new Date().setDate(1)).toISOString();
+      searchParams.get('timeMin') || new Date(new Date().setDate(1)).toISOString()
     const timeMax =
-      searchParams.get('timeMax') ||
-      new Date(
-        new Date().setMonth(new Date().getMonth() + 2)
-      ).toISOString();
+      searchParams.get('timeMax') || new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
 
-    const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary';
+    const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
 
     const resp = await cal.events.list({
       calendarId,
@@ -57,83 +54,80 @@ export async function GET(req: NextRequest) {
       timeZone: 'Asia/Seoul',
       showDeleted: false,
       maxResults: 2500,
-    });
+    })
 
-    return NextResponse.json({ events: resp.data.items || [], calendarId });
+    return NextResponse.json({ events: resp.data.items || [], calendarId })
   } catch (e: unknown) {
-    const err = e as any;
-    console.error('[calendar/events] error:', err?.response?.data || err);
-    return NextResponse.json(
-      {
-        error:
-          err?.response?.data?.error_description ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'failed_to_fetch_events',
-      },
-      { status: 500 }
-    );
+    const msg =
+      (e as { response?: { data?: { error_description?: string; error?: string } } }).response?.data?.error_description ||
+      (e as { response?: { data?: { error?: string } } }).response?.data?.error ||
+      (e as Error).message ||
+      'failed_to_fetch_events'
+    console.error('[calendar/events] error:', (e as { response?: { data?: unknown } }).response?.data || e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const cal = await getAuthedCalendar();
-    const body: CreatePayload = await req.json();
-    const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary';
+    const cal = await getAuthedCalendar()
+    const body = (await req.json()) as CreateEventBody
+    const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
 
-    if (!body.title || !body.start)
-      throw new Error('title/start is required');
+    const title = body.title || ''
+    let startRaw = body.start
+    let endRaw = body.end
+    const allDay = !!body.allDay
 
-    let startObj: calendar_v3.Schema$EventDateTime = {};
-    let endObj: calendar_v3.Schema$EventDateTime = {};
-    let endRaw = body.end;
+    if (!title || !startRaw) throw new Error('title/start is required')
 
-    if (
-      body.allDay ||
-      (body.start.length === 10 && (!endRaw || endRaw.length === 10))
-    ) {
+    // Google API 규칙에 맞춘 start/end
+    let startObj: calendar_v3.Schema$EventDateTime
+    let endObj: calendar_v3.Schema$EventDateTime
+
+    if (allDay || (startRaw.length === 10 && (!endRaw || endRaw.length === 10))) {
+      // 올데이
       if (!endRaw) {
-        const d = new Date(body.start + 'T00:00:00+09:00');
-        const next = new Date(d.getTime() + 24 * 60 * 60 * 1000);
-        endRaw = next.toISOString().slice(0, 10);
+        const d = new Date(startRaw + 'T00:00:00+09:00')
+        const next = new Date(d.getTime() + 24 * 60 * 60 * 1000)
+        endRaw = next.toISOString().slice(0, 10) // YYYY-MM-DD
       }
-      startObj = { date: body.start };
-      endObj = { date: endRaw };
+      startObj = { date: startRaw }
+      endObj = { date: endRaw }
     } else {
+      // 시간 지정
       if (!endRaw) {
-        const start = new Date(body.start);
-        const end = new Date(start.getTime() + 60 * 60 * 1000);
-        endRaw = end.toISOString();
+        const start = new Date(startRaw)
+        const end = new Date(start.getTime() + 60 * 60 * 1000)
+        endRaw = end.toISOString()
       }
-      startObj = { dateTime: body.start, timeZone: 'Asia/Seoul' };
-      endObj = { dateTime: endRaw, timeZone: 'Asia/Seoul' };
+      startObj = { dateTime: startRaw, timeZone: 'Asia/Seoul' }
+      endObj = { dateTime: endRaw, timeZone: 'Asia/Seoul' }
     }
 
     const inserted = await cal.events.insert({
       calendarId,
       requestBody: {
-        summary: body.title,
+        summary: title,
         description: body.description || '',
         location: body.location || '',
         start: startObj,
         end: endObj,
       },
-    });
-    return NextResponse.json({ event: inserted.data });
+    })
+
+    return NextResponse.json({ event: inserted.data })
   } catch (e: unknown) {
-    const err = e as any;
-    console.error('[calendar/events POST] error:', err?.response?.data || err);
-    return NextResponse.json(
-      {
-        error:
-          err?.response?.data?.error?.message ||
-          err?.response?.data?.error_description ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'failed_to_create_event',
-      },
-      { status: 500 }
-    );
+    const errResp =
+      (e as { response?: { data?: { error?: { message?: string }; error_description?: string; error?: string } } }).response
+        ?.data
+    const msg =
+      errResp?.error?.message ||
+      errResp?.error_description ||
+      errResp?.error ||
+      (e as Error).message ||
+      'failed_to_create_event'
+    console.error('[calendar/events POST] error:', (e as { response?: { data?: unknown } }).response?.data || e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
