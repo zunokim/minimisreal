@@ -1,4 +1,7 @@
 // src/app/api/news/fetch-a93fks1x9p/route.ts
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { ingestNaverNews } from '@/lib/news/ingestNaver'
@@ -12,9 +15,3 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
   }
 }
-
-
-// Node.js 런타임 강제
-export const runtime = 'nodejs'
-// (선택) 캐시/프리렌더 방지
-export const dynamic = 'force-dynamic'
