@@ -8,16 +8,17 @@ import { supabase } from '@/lib/supabaseClient'
 import LogoutButton from '@/components/LogoutButton'
 
 // lucide-react 아이콘
-import { Home, FileText, BarChart3, Newspaper, Settings } from 'lucide-react'
+import { Home, FileText, BarChart3, Newspaper, Settings, Calendar } from 'lucide-react'
 
 type NavItem = { name: string; href: string; icon: React.ReactNode }
 
 const navItems: NavItem[] = [
-  { name: 'Home',  href: '/',      icon: <Home className="w-4 h-4" /> },
-  { name: 'Board', href: '/board', icon: <FileText className="w-4 h-4" /> },
-  { name: 'Data',  href: '/data',  icon: <BarChart3 className="w-4 h-4" /> },
-  { name: 'News',  href: '/news',  icon: <Newspaper className="w-4 h-4" /> },
-  { name: 'Etc',   href: '/etc',   icon: <Settings className="w-4 h-4" /> },
+  { name: 'Home',     href: '/',        icon: <Home className="w-4 h-4" /> },
+  { name: 'Board',    href: '/board',   icon: <FileText className="w-4 h-4" /> },
+  { name: 'Data',     href: '/data',    icon: <BarChart3 className="w-4 h-4" /> },
+  { name: 'News',     href: '/news',    icon: <Newspaper className="w-4 h-4" /> },
+  { name: 'Schedule', href: '/schedule',icon: <Calendar className="w-4 h-4" /> }, // ✅ 추가
+  { name: 'Etc',      href: '/etc',     icon: <Settings className="w-4 h-4" /> },
 ]
 
 export default function LayoutWrapper({ children }: { children: ReactNode }) {
