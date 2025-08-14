@@ -1,256 +1,538 @@
-'use client';
+// src/app/schedule/schedule.client.tsx
+'use client'
 
-import { useEffect, useState } from 'react';
-import dayjs from 'dayjs';
-import { calendar_v3 } from 'googleapis';
-import 'dayjs/locale/ko';
+import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import interactionPlugin from '@fullcalendar/interaction'
+import koLocale from '@fullcalendar/core/locales/ko'
+import {
+  DateSelectArg,
+  EventClickArg,
+  EventDropArg,
+  EventResizeDoneArg,
+  DatesSetArg,
+  EventContentArg,
+  EventMountArg,
+  EventClassNamesArg,
+} from '@fullcalendar/core'
+import { formatISO, startOfMonth, endOfMonth, addMonths } from 'date-fns'
 
-dayjs.locale('ko');
+type CalEvent = {
+  id: string
+  title: string
+  start: string
+  end?: string
+  allDay?: boolean
+}
 
-interface CalendarForm {
-  id?: string;
-  title: string;
-  description: string;
-  location: string;
-  start: string;
-  end: string;
-  allDay: boolean;
+type EditForm = {
+  id?: string
+  title: string
+  allDay: boolean
+  startInput: string // allDay: YYYY-MM-DD, timed: YYYY-MM-DDTHH:mm
+  endInput: string   // same as above
+}
+
+type GoogleEvent = {
+  id: string
+  summary: string
+  start?: { dateTime?: string; date?: string }
+  end?: { dateTime?: string; date?: string }
+}
+
+type Range = { timeMin: string; timeMax: string }
+
+// ---- helpers ----
+
+function dateToLocalInput(dt: Date) {
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+  const y = dt.getFullYear()
+  const m = pad(dt.getMonth() + 1)
+  const d = pad(dt.getDate())
+  const hh = pad(dt.getHours())
+  const mm = pad(dt.getMinutes())
+  return `${y}-${m}-${d}T${hh}:${mm}`
+}
+
+function dateOnlyFromISO(iso: string) {
+  if (iso.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
+  const d = new Date(iso)
+  return d.toISOString().slice(0, 10)
 }
 
 export default function ScheduleClient() {
-  const [events, setEvents] = useState<calendar_v3.Schema$Event[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState<CalendarForm>({
-    title: '',
-    description: '',
-    location: '',
-    start: '',
-    end: '',
-    allDay: false,
-  });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [popupOpen, setPopupOpen] = useState(false);
+  const sp = useSearchParams()
+  const queryConnected = sp.get('connected') === '1'
 
-  const fetchEvents = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/calendar/events');
-      if (!res.ok) throw new Error('이벤트 불러오기 실패');
-      const data: { events: calendar_v3.Schema$Event[] } = await res.json();
-      setEvents(data.events || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
+  const [events, setEvents] = useState<CalEvent[]>([])
+  const [range, setRange] = useState<Range>({
+    timeMin: formatISO(startOfMonth(new Date())),
+    timeMax: formatISO(endOfMonth(addMonths(new Date(), 1))),
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [connected, setConnected] = useState<boolean>(queryConnected)
+
+  // modal state
+  const [modalOpen, setModalOpen] = useState(false)
+  const [form, setForm] = useState<EditForm>({
+    title: '',
+    allDay: true,
+    startInput: '',
+    endInput: '',
+  })
+
+  // 🔒 모달 열릴 때 배경 스크롤 잠금
+  useEffect(() => {
+    if (modalOpen) {
+      const prev = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = prev
+      }
     }
-  };
+  }, [modalOpen])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const qs = new URLSearchParams(range as Record<string, string>).toString()
+      const res = await fetch(`/api/calendar/events?${qs}`, { cache: 'no-store' })
+      const json: { events?: GoogleEvent[]; error?: string } = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Failed to load')
+
+      const mapped: CalEvent[] = (json.events || []).map((e: GoogleEvent) => ({
+        id: e.id,
+        title: e.summary,
+        start: e.start?.dateTime || e.start?.date || '',
+        end: e.end?.dateTime || e.end?.date,
+        allDay: !!e.start?.date,
+      }))
+      setEvents(mapped)
+      setConnected(true)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load')
+    } finally {
+      setLoading(false)
+    }
+  }, [range])
 
   useEffect(() => {
-    fetchEvents();
-  }, []);
+    load()
+  }, [load])
 
-  const openPopup = (event?: calendar_v3.Schema$Event) => {
-    if (event) {
+  // 🔒 무한 업데이트 방지
+  const handleDateSet = useCallback((arg: DatesSetArg) => {
+    const nextMin = arg.startStr
+    const nextMax = arg.endStr
+    setRange(prev =>
+      (prev.timeMin === nextMin && prev.timeMax === nextMax)
+        ? prev
+        : { timeMin: nextMin, timeMax: nextMax }
+    )
+  }, [])
+
+  // 새 이벤트 만들기 → 모달 열기
+  const handleSelect = (info: DateSelectArg) => {
+    const isAllDay = !!info.allDay
+    if (isAllDay) {
       setForm({
-        id: event.id || '',
-        title: event.summary || '',
-        description: event.description || '',
-        location: event.location || '',
-        start:
-          event.start?.dateTime || event.start?.date || dayjs().format('YYYY-MM-DD'),
-        end:
-          event.end?.dateTime || event.end?.date || dayjs().format('YYYY-MM-DD'),
-        allDay: !!event.start?.date,
-      });
-      setEditingId(event.id || null);
+        id: undefined,
+        title: '',
+        allDay: true,
+        startInput: info.startStr.slice(0, 10),
+        endInput: info.endStr.slice(0, 10),
+      })
+    } else {
+      const s = new Date(info.startStr)
+      const e = info.endStr ? new Date(info.endStr) : new Date(s.getTime() + 60 * 60 * 1000)
+      setForm({
+        id: undefined,
+        title: '',
+        allDay: false,
+        startInput: dateToLocalInput(s),
+        endInput: dateToLocalInput(e),
+      })
+    }
+    setModalOpen(true)
+  }
+
+  // 드래그/리사이즈 → 서버로 즉시 반영
+  const handleEventDropOrResize = async (changeInfo: EventDropArg | EventResizeDoneArg) => {
+    const { event } = changeInfo
+    const eid = encodeURIComponent(event.id)
+    const payload: Record<string, string | boolean> = { allDay: !!event.allDay }
+    if (event.allDay) {
+      if (event.start) payload.start = dateOnlyFromISO(event.start.toISOString())
+      if (event.end) payload.end = dateOnlyFromISO(event.end.toISOString())
+    } else {
+      if (event.start) payload.start = event.start.toISOString()
+      if (event.end) payload.end = event.end.toISOString()
+    }
+
+    const res = await fetch(`/api/calendar/events/${eid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) alert('수정 실패: ' + (j as { error?: string })?.error || res.statusText)
+    load()
+  }
+
+  // 이벤트 클릭 → 편집 모달
+  const handleEventClick = (clickInfo: EventClickArg) => {
+    const e = clickInfo.event
+    const isAllDay = !!e.allDay
+    if (isAllDay) {
+      setForm({
+        id: e.id,
+        title: e.title || '',
+        allDay: true,
+        startInput: e.start ? dateOnlyFromISO(e.start.toISOString()) : '',
+        endInput: e.end ? dateOnlyFromISO(e.end.toISOString()) : (e.start ? dateOnlyFromISO(e.start.toISOString()) : ''),
+      })
     } else {
       setForm({
-        title: '',
-        description: '',
-        location: '',
-        start: dayjs().format('YYYY-MM-DD'),
-        end: dayjs().format('YYYY-MM-DD'),
+        id: e.id,
+        title: e.title || '',
         allDay: false,
-      });
-      setEditingId(null);
+        startInput: e.start ? dateToLocalInput(e.start) : '',
+        endInput: e.end ? dateToLocalInput(e.end) : (e.start ? dateToLocalInput(new Date(e.start.getTime() + 60 * 60 * 1000)) : ''),
+      })
     }
-    setPopupOpen(true);
-  };
+    setModalOpen(true)
+  }
 
-  const closePopup = () => {
-    setPopupOpen(false);
-  };
+  // ---- modal actions ----
 
-  const handleFormChange = (field: keyof CalendarForm, value: string | boolean) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  const onChangeField = (patch: Partial<EditForm>) => setForm(prev => ({ ...prev, ...patch }))
 
-  const saveEvent = async () => {
-    const payload: CalendarForm = {
-      title: form.title,
-      description: form.description,
-      location: form.location,
-      start: form.start,
-      end: form.end,
-      allDay: form.allDay,
-    };
+  const onSubmitForm = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const allDay = form.allDay
+    const hasId = !!form.id
 
     try {
-      let url = '/api/calendar/events';
-      let method: 'POST' | 'PATCH' = 'POST';
-      if (editingId) {
-        url = `/api/calendar/events/${editingId}`;
-        method = 'PATCH';
+      if (!form.title || !form.startInput) {
+        alert('제목과 시작은 필수입니다.')
+        return
       }
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('저장 실패');
-      await fetchEvents();
-      closePopup();
-    } catch (e) {
-      console.error(e);
-    }
-  };
+      if (hasId) {
+        const eid = encodeURIComponent(form.id!)
+        const payload: Record<string, string | boolean> = { title: form.title, allDay }
+        if (allDay) {
+          payload.start = form.startInput
+          payload.end = form.endInput || form.startInput
+        } else {
+          const s = new Date(form.startInput)
+          const e2 = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
+          payload.start = s.toISOString()
+          payload.end = e2.toISOString()
+        }
+        const res = await fetch(`/api/calendar/events/${eid}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error((j as { error?: string })?.error || res.statusText)
+      } else {
+        const payload: Record<string, string | boolean> = { title: form.title, allDay }
+        if (allDay) {
+          payload.start = form.startInput
+          payload.end = form.endInput || form.startInput
+        } else {
+          const s = new Date(form.startInput)
+          const e2 = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
+          payload.start = s.toISOString()
+          payload.end = e2.toISOString()
+        }
+        const res = await fetch('/api/calendar/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error((j as { error?: string })?.error || res.statusText)
+      }
 
-  const deleteEvent = async (id: string) => {
-    if (!confirm('삭제하시겠습니까?')) return;
-    try {
-      const res = await fetch(`/api/calendar/events/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('삭제 실패');
-      await fetchEvents();
-    } catch (e) {
-      console.error(e);
+      setModalOpen(false)
+      load()
+    } catch (err: unknown) {
+      alert('저장 실패: ' + (err instanceof Error ? err.message : 'unknown'))
     }
-  };
+  }
+
+  const onDelete = async () => {
+    if (!form.id) return
+    if (!confirm('정말 삭제할까요?')) return
+    const eid = encodeURIComponent(form.id)
+    const res = await fetch(`/api/calendar/events/${eid}`, { method: 'DELETE' })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      alert('삭제 실패: ' + ((j as { error?: string })?.error || res.statusText))
+      return
+    }
+    setModalOpen(false)
+    load()
+  }
+
+  // 버튼: 연결됨 → 연한 주황(orange-400)
+  const connectBtnClass = useMemo(
+    () =>
+      [
+        'px-3 py-1 rounded-lg border transition',
+        connected
+          ? 'bg-orange-400 text-white border-orange-400 hover:bg-orange-500'
+          : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-50',
+      ].join(' '),
+    [connected]
+  )
+
+  // 이벤트에 클래스 붙여서 색상 분기: all-day vs timed
+  const eventClassNames = useCallback((arg: EventClassNamesArg) => {
+    return [arg.event.allDay ? 'fc-all-day' : 'fc-timed']
+  }, [])
 
   return (
-    <div className="relative p-4">
-      <div className="flex justify-between mb-4">
-        <h1 className="text-lg font-bold">일정 관리</h1>
-        <button
-          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
-          onClick={() => openPopup()}
-        >
-          새 일정
-        </button>
+    <div className="p-4">
+      {/* 전역 스타일: 색상 분기 + 반응형 + 레이어링 */}
+      <style jsx global>{`
+        /* FullCalendar 기본 글자 크기 소폭 축소 */
+        .fc { --fc-small-font-size: 0.85rem; }
+
+        /* 이벤트 한 줄 말줄임 */
+        .fc .fc-event-title,
+        .fc .fc-event-time {
+          overflow: hidden;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+        }
+
+        /* ✅ 시간 텍스트는 전부 숨김 (요청사항) */
+        .fc .fc-event-time { display: none !important; }
+
+        /* ✅ 색상 분기 */
+        /* 종일(기본 주황) */
+        .fc .fc-event.fc-all-day {
+          background-color: #fb923c !important; /* orange-400 */
+          border-color: #fb923c !important;
+          color: #ffffff !important;
+        }
+        /* 시간 지정(더 연한 주황) */
+        .fc .fc-event.fc-timed {
+          background-color: #fed7aa !important; /* orange-200 */
+          border-color: #fed7aa !important;
+          color: #1f2937 !important;            /* slate-800 글자 */
+        }
+
+        /* 모바일(≤640px) */
+        @media (max-width: 640px) {
+          .fc .fc-toolbar-title { font-size: 1rem; }
+          .fc .fc-button { padding: 0.25rem 0.4rem; font-size: 0.75rem; }
+          .fc .fc-col-header-cell-cushion { font-size: 0.75rem; }
+          .fc .fc-daygrid-day-number { font-size: 0.75rem; }
+          .fc .fc-event { font-size: 0.75rem; }
+        }
+
+        /* 더 작은 모바일(≤480px) */
+        @media (max-width: 480px) {
+          .fc .fc-toolbar-title { font-size: 0.95rem; }
+          .fc .fc-button { padding: 0.2rem 0.35rem; font-size: 0.7rem; }
+          .fc .fc-col-header-cell-cushion { font-size: 0.7rem; }
+          .fc .fc-daygrid-day-number { font-size: 0.7rem; }
+          .fc .fc-event { font-size: 0.7rem; }
+        }
+
+        /* 아주 작은 모바일(≤360px) */
+        @media (max-width: 360px) {
+          .fc .fc-toolbar-title { font-size: 0.9rem; }
+          .fc .fc-button { padding: 0.18rem 0.3rem; font-size: 0.65rem; }
+          .fc .fc-col-header-cell-cushion { font-size: 0.65rem; }
+          .fc .fc-daygrid-day-number { font-size: 0.65rem; }
+          .fc .fc-event { font-size: 0.65rem; }
+        }
+      `}</style>
+
+      <div className="mb-3 flex items-center gap-3">
+        <h1 className="text-xl font-semibold">Schedule</h1>
+
+        <a href="/api/google/oauth/start" className={connectBtnClass}>
+          {connected ? 'Connected (Google)' : 'Connect Google'}
+        </a>
+
+        {loading && <span className="text-sm opacity-70">불러오는 중…</span>}
+        {error && <span className="text-sm text-red-500">에러: {error}</span>}
       </div>
 
-      {loading ? (
-        <p>불러오는 중...</p>
-      ) : (
-        <ul className="space-y-2">
-          {events.map((event) => {
-            const isAllDay = !!event.start?.date;
-            const bgColor = isAllDay
-              ? 'bg-orange-100'
-              : 'bg-orange-200';
+      <div className="relative z-0">
+        <FullCalendar
+          locales={[koLocale]}
+          locale="ko"
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView="dayGridMonth"
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay',
+          }}
+          height="80vh"
+          selectable
+          selectMirror
+          editable
+          dayMaxEventRows={true}
+          moreLinkText={(n) => `+${n}개`}
+          datesSet={handleDateSet}
+          select={handleSelect}
+          eventDrop={handleEventDropOrResize}
+          eventResize={handleEventDropOrResize}
+          eventClick={handleEventClick}
+          events={events}
+          /* 전체 기본색은 쓰지 않고, 이벤트별 클래스에서 색상을 분기 */
+          eventClassNames={eventClassNames}
+          eventDidMount={(info: EventMountArg) => {
+            if (info.el) info.el.style.cursor = 'pointer'
+          }}
+          /* 시간 텍스트를 표시하지 않고, 제목만 렌더 */
+          eventContent={(arg: EventContentArg) => {
+            const title = arg.event.title || ''
+            return { html: `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</div>` }
+          }}
+        />
+      </div>
 
-            return (
-              <li
-                key={event.id}
-                className={`p-2 rounded ${bgColor} flex justify-between items-center`}
-              >
-                <div>
-                  <div className="font-semibold">{event.summary}</div>
-                  {isAllDay ? null : (
-                    <div className="text-sm text-gray-600">
-                      {dayjs(event.start?.dateTime).format('MM/DD HH:mm')} ~{' '}
-                      {dayjs(event.end?.dateTime).format('MM/DD HH:mm')}
-                    </div>
-                  )}
+      {/* ---- Modal ---- */}
+      {modalOpen && (
+        <>
+          {/* overlay */}
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[1000]"
+            onClick={() => setModalOpen(false)}
+          />
+          {/* dialog */}
+          <div className="fixed inset-0 flex items-center justify-center p-4 z-[1010]">
+            <form
+              onSubmit={onSubmitForm}
+              className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border p-4 space-y-4 relative"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold">
+                  {form.id ? '일정 편집' : '새 일정'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="px-2 py-1 text-sm rounded border hover:bg-gray-50"
+                  aria-label="닫기"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <label className="block">
+                <span className="block text-sm font-medium mb-1">제목</span>
+                <input
+                  type="text"
+                  value={form.title}
+                  onChange={(e) => onChangeField({ title: e.target.value })}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="제목을 입력하세요"
+                  required
+                />
+              </label>
+
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.allDay}
+                  onChange={(e) => onChangeField({ allDay: e.target.checked })}
+                />
+                <span className="text-sm">종일</span>
+              </label>
+
+              {form.allDay ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="block text-sm font-medium mb-1">시작(날짜)</span>
+                    <input
+                      type="date"
+                      value={form.startInput}
+                      onChange={(e) => onChangeField({ startInput: e.target.value })}
+                      className="w-full border rounded px-3 py-2 text-sm"
+                      required
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-sm font-medium mb-1">종료(날짜)</span>
+                    <input
+                      type="date"
+                      value={form.endInput}
+                      onChange={(e) => onChangeField({ endInput: e.target.value })}
+                      className="w-full border rounded px-3 py-2 text-sm"
+                    />
+                  </label>
                 </div>
-                <div className="space-x-2">
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="block text-sm font-medium mb-1">시작(시간)</span>
+                    <input
+                      type="datetime-local"
+                      value={form.startInput}
+                      onChange={(e) => onChangeField({ startInput: e.target.value })}
+                      className="w-full border rounded px-3 py-2 text-sm"
+                      required
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="block text-sm font-medium mb-1">종료(시간)</span>
+                    <input
+                      type="datetime-local"
+                      value={form.endInput}
+                      onChange={(e) => onChangeField({ endInput: e.target.value })}
+                      className="w-full border rounded px-3 py-2 text-sm"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-2">
+                {form.id ? (
                   <button
-                    className="text-blue-500"
-                    onClick={() => openPopup(event)}
-                  >
-                    수정
-                  </button>
-                  <button
-                    className="text-red-500"
-                    onClick={() => deleteEvent(event.id || '')}
+                    type="button"
+                    onClick={onDelete}
+                    className="px-3 py-2 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 text-sm"
                   >
                     삭제
                   </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                ) : <span />}
 
-      {popupOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black opacity-50"
-            onClick={closePopup}
-          ></div>
-          <div className="relative bg-white rounded p-6 z-50 w-full max-w-md">
-            <h2 className="text-lg font-bold mb-4">
-              {editingId ? '일정 수정' : '일정 추가'}
-            </h2>
-            <input
-              className="border p-2 w-full mb-2"
-              placeholder="제목"
-              value={form.title}
-              onChange={(e) => handleFormChange('title', e.target.value)}
-            />
-            <textarea
-              className="border p-2 w-full mb-2"
-              placeholder="설명"
-              value={form.description}
-              onChange={(e) => handleFormChange('description', e.target.value)}
-            />
-            <input
-              className="border p-2 w-full mb-2"
-              placeholder="위치"
-              value={form.location}
-              onChange={(e) => handleFormChange('location', e.target.value)}
-            />
-            <label className="flex items-center mb-2">
-              <input
-                type="checkbox"
-                checked={form.allDay}
-                onChange={(e) => handleFormChange('allDay', e.target.checked)}
-                className="mr-2"
-              />
-              종일
-            </label>
-            <input
-              type={form.allDay ? 'date' : 'datetime-local'}
-              className="border p-2 w-full mb-2"
-              value={form.start}
-              onChange={(e) => handleFormChange('start', e.target.value)}
-            />
-            <input
-              type={form.allDay ? 'date' : 'datetime-local'}
-              className="border p-2 w-full mb-2"
-              value={form.end}
-              onChange={(e) => handleFormChange('end', e.target.value)}
-            />
-            <div className="flex justify-end space-x-2">
-              <button
-                className="bg-gray-300 px-3 py-1 rounded"
-                onClick={closePopup}
-              >
-                취소
-              </button>
-              <button
-                className="bg-blue-500 text-white px-3 py-1 rounded"
-                onClick={saveEvent}
-              >
-                저장
-              </button>
-            </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(false)}
+                    className="px-3 py-2 rounded-lg border hover:bg-gray-50 text-sm"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3 py-2 rounded-lg bg-orange-400 hover:bg-orange-500 text-white text-sm"
+                  >
+                    저장
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
-        </div>
+        </>
       )}
     </div>
-  );
+  )
 }
