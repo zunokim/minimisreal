@@ -41,7 +41,8 @@ export async function GET(req: NextRequest) {
     const timeMin =
       searchParams.get('timeMin') || new Date(new Date().setDate(1)).toISOString()
     const timeMax =
-      searchParams.get('timeMax') || new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
+      searchParams.get('timeMax') ||
+      new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
 
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
 
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
 
     const title = body.title || ''
-    let startRaw = body.start
+    const startRaw = body.start            // <- prefer-const 대응
     let endRaw = body.end
     const allDay = !!body.allDay
 
