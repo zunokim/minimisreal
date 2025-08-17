@@ -33,13 +33,24 @@ async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
   return google.calendar({ version: 'v3', auth: oauth2Client })
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+function extractEventIdFromUrl(req: Request): string {
+  const url = new URL(req.url)
+  const parts = url.pathname.split('/').filter(Boolean)
+  const eventIdEncoded = parts[parts.length - 1]
+  const eventId = decodeURIComponent(eventIdEncoded || '')
+  if (!eventId) throw new Error('invalid_event_id')
+  return eventId
+}
+
+export async function PATCH(req: Request) {
   try {
     const cal = await getAuthedCalendar()
-    const body = (await req.json()) as UpdateEventBody
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
+    const eventId = extractEventIdFromUrl(req)
 
+    const body = (await req.json()) as UpdateEventBody
     const patch: calendar_v3.Schema$Event = {}
+
     if (typeof body.title === 'string') patch.summary = body.title
     if (typeof body.description === 'string') patch.description = body.description
     if (typeof body.location === 'string') patch.location = body.location
@@ -51,6 +62,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (hasStart || hasEnd) {
       const startRaw = body.start
       const endRaw = body.end
+
       const isDateOnly =
         allDay ||
         ((startRaw && startRaw.length === 10) &&
@@ -67,9 +79,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
     const updated = await cal.events.patch({
       calendarId,
-      eventId: params.id,
+      eventId,
       requestBody: patch,
     })
+
     return NextResponse.json({ event: updated.data })
   } catch (e) {
     const respData = (e as { response?: { data?: unknown } }).response?.data
@@ -85,17 +98,11 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-// ✅ DELETE: 두 번째 인자 제거, URL 경로에서 id 추출
 export async function DELETE(req: Request) {
   try {
     const cal = await getAuthedCalendar()
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
-
-    const url = new URL(req.url)
-    const parts = url.pathname.split('/').filter(Boolean)
-    const eventIdEncoded = parts[parts.length - 1]
-    const eventId = decodeURIComponent(eventIdEncoded || '')
-    if (!eventId) throw new Error('invalid_event_id')
+    const eventId = extractEventIdFromUrl(req)
 
     await cal.events.delete({ calendarId, eventId })
     return NextResponse.json({ ok: true })
