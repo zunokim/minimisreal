@@ -8,16 +8,6 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import koLocale from '@fullcalendar/core/locales/ko'
-import {
-  DateSelectArg,
-  EventClickArg,
-  EventDropArg,
-  EventResizeDoneArg,
-  DatesSetArg,
-  EventContentArg,
-  EventMountArg,
-  EventClassNamesArg,
-} from '@fullcalendar/core'
 import { formatISO, startOfMonth, endOfMonth, addMonths } from 'date-fns'
 
 type CalEvent = {
@@ -36,17 +26,33 @@ type EditForm = {
   endInput: string   // same as above
 }
 
-type GoogleEvent = {
-  id: string
-  summary: string
-  start?: { dateTime?: string; date?: string }
-  end?: { dateTime?: string; date?: string }
-}
-
 type Range = { timeMin: string; timeMax: string }
 
-// ---- helpers ----
+// ---- FullCalendar 콜백에 쓰는 얕은 타입(버전 의존성 최소화) ----
+type DatesSetInfo = { startStr: string; endStr: string }
+type SelectInfo = { allDay: boolean; startStr: string; endStr: string }
+type ClickInfo = {
+  event: {
+    id: string
+    title: string
+    allDay: boolean
+    start: Date | null
+    end: Date | null
+  }
+}
+type ChangeInfo = {
+  event: {
+    id: string
+    allDay: boolean
+    start: Date | null
+    end: Date | null
+  }
+}
+type EventClassNamesInfo = { event: { allDay: boolean } }
+type EventDidMountInfo = { el: HTMLElement }
+type EventContentInfo = { event: { title?: string } }
 
+// ---- helpers ----
 function dateToLocalInput(dt: Date) {
   const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
   const y = dt.getFullYear()
@@ -100,22 +106,38 @@ export default function ScheduleClient() {
     setLoading(true)
     setError(null)
     try {
-      const qs = new URLSearchParams(range as Record<string, string>).toString()
-      const res = await fetch(`/api/calendar/events?${qs}`, { cache: 'no-store' })
-      const json: { events?: GoogleEvent[]; error?: string } = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'Failed to load')
+      const qs = new URLSearchParams({
+        timeMin: range.timeMin,
+        timeMax: range.timeMax,
+      }).toString()
 
-      const mapped: CalEvent[] = (json.events || []).map((e: GoogleEvent) => ({
+      const res = await fetch(`/api/calendar/events?${qs}`, { cache: 'no-store' })
+      const json: { events?: unknown[] } = await res.json()
+      if (!res.ok) throw new Error((json as { error?: string })?.error || 'Failed to load')
+
+      type GoogleEvent = {
+        id: string
+        summary?: string
+        start?: { dateTime?: string; date?: string }
+        end?: { dateTime?: string; date?: string }
+      }
+
+      const mapped: CalEvent[] = (json.events as GoogleEvent[] | undefined)?.map((e) => ({
         id: e.id,
-        title: e.summary,
+        title: e.summary ?? '',
         start: e.start?.dateTime || e.start?.date || '',
-        end: e.end?.dateTime || e.end?.date,
+        end: e.end?.dateTime || e.end?.date || undefined,
         allDay: !!e.start?.date,
-      }))
+      })) ?? []
+
       setEvents(mapped)
       setConnected(true)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
+    } catch (err: unknown) {
+      const msg =
+        (err instanceof Error ? err.message : undefined) ||
+        (typeof err === 'string' ? err : undefined) ||
+        'Failed to load'
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -126,7 +148,7 @@ export default function ScheduleClient() {
   }, [load])
 
   // 🔒 무한 업데이트 방지
-  const handleDateSet = useCallback((arg: DatesSetArg) => {
+  const handleDateSet = useCallback((arg: DatesSetInfo) => {
     const nextMin = arg.startStr
     const nextMax = arg.endStr
     setRange(prev =>
@@ -137,7 +159,7 @@ export default function ScheduleClient() {
   }, [])
 
   // 새 이벤트 만들기 → 모달 열기
-  const handleSelect = (info: DateSelectArg) => {
+  const handleSelect = (info: SelectInfo) => {
     const isAllDay = !!info.allDay
     if (isAllDay) {
       setForm({
@@ -162,10 +184,15 @@ export default function ScheduleClient() {
   }
 
   // 드래그/리사이즈 → 서버로 즉시 반영
-  const handleEventDropOrResize = async (changeInfo: EventDropArg | EventResizeDoneArg) => {
+  const handleEventDropOrResize = async (changeInfo: ChangeInfo) => {
     const { event } = changeInfo
     const eid = encodeURIComponent(event.id)
-    const payload: Record<string, string | boolean> = { allDay: !!event.allDay }
+    const payload: {
+      allDay: boolean
+      start?: string
+      end?: string
+    } = { allDay: !!event.allDay }
+
     if (event.allDay) {
       if (event.start) payload.start = dateOnlyFromISO(event.start.toISOString())
       if (event.end) payload.end = dateOnlyFromISO(event.end.toISOString())
@@ -179,13 +206,13 @@ export default function ScheduleClient() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    const j = await res.json().catch(() => ({}))
-    if (!res.ok) alert('수정 실패: ' + (j as { error?: string })?.error || res.statusText)
+    const j: { error?: string } = await res.json().catch(() => ({} as { error?: string }))
+    if (!res.ok) alert('수정 실패: ' + (j?.error || res.statusText))
     load()
   }
 
   // 이벤트 클릭 → 편집 모달
-  const handleEventClick = (clickInfo: EventClickArg) => {
+  const handleEventClick = (clickInfo: ClickInfo) => {
     const e = clickInfo.event
     const isAllDay = !!e.allDay
     if (isAllDay) {
@@ -209,7 +236,6 @@ export default function ScheduleClient() {
   }
 
   // ---- modal actions ----
-
   const onChangeField = (patch: Partial<EditForm>) => setForm(prev => ({ ...prev, ...patch }))
 
   const onSubmitForm = async (e: React.FormEvent) => {
@@ -225,47 +251,61 @@ export default function ScheduleClient() {
 
       if (hasId) {
         const eid = encodeURIComponent(form.id!)
-        const payload: Record<string, string | boolean> = { title: form.title, allDay }
+        const payload: { title: string; allDay: boolean; start: string; end: string } = {
+          title: form.title,
+          allDay,
+          start: '',
+          end: '',
+        }
         if (allDay) {
           payload.start = form.startInput
           payload.end = form.endInput || form.startInput
         } else {
           const s = new Date(form.startInput)
-          const e2 = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
+          const end = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
           payload.start = s.toISOString()
-          payload.end = e2.toISOString()
+          payload.end = end.toISOString()
         }
         const res = await fetch(`/api/calendar/events/${eid}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
-        const j = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error((j as { error?: string })?.error || res.statusText)
+        const j: { error?: string } = await res.json().catch(() => ({} as { error?: string }))
+        if (!res.ok) throw new Error(j?.error || res.statusText)
       } else {
-        const payload: Record<string, string | boolean> = { title: form.title, allDay }
+        const payload: { title: string; allDay: boolean; start: string; end: string } = {
+          title: form.title,
+          allDay,
+          start: '',
+          end: '',
+        }
         if (allDay) {
           payload.start = form.startInput
           payload.end = form.endInput || form.startInput
         } else {
           const s = new Date(form.startInput)
-          const e2 = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
+          const end = form.endInput ? new Date(form.endInput) : new Date(s.getTime() + 60 * 60 * 1000)
           payload.start = s.toISOString()
-          payload.end = e2.toISOString()
+          payload.end = end.toISOString()
         }
         const res = await fetch('/api/calendar/events', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
-        const j = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error((j as { error?: string })?.error || res.statusText)
+        const j: { error?: string } = await res.json().catch(() => ({} as { error?: string }))
+        if (!res.ok) throw new Error(j?.error || res.statusText)
       }
 
       setModalOpen(false)
       load()
     } catch (err: unknown) {
-      alert('저장 실패: ' + (err instanceof Error ? err.message : 'unknown'))
+      const msg =
+        (err instanceof Error ? err.message : undefined) ||
+        (typeof err === 'string' ? err : undefined) ||
+        'unknown'
+      alert('저장 실패: ' + msg)
     }
   }
 
@@ -274,9 +314,9 @@ export default function ScheduleClient() {
     if (!confirm('정말 삭제할까요?')) return
     const eid = encodeURIComponent(form.id)
     const res = await fetch(`/api/calendar/events/${eid}`, { method: 'DELETE' })
-    const j = await res.json().catch(() => ({}))
+    const j: { error?: string } = await res.json().catch(() => ({} as { error?: string }))
     if (!res.ok) {
-      alert('삭제 실패: ' + ((j as { error?: string })?.error || res.statusText))
+      alert('삭제 실패: ' + (j?.error || res.statusText))
       return
     }
     setModalOpen(false)
@@ -296,7 +336,7 @@ export default function ScheduleClient() {
   )
 
   // 이벤트에 클래스 붙여서 색상 분기: all-day vs timed
-  const eventClassNames = useCallback((arg: EventClassNamesArg) => {
+  const eventClassNames = useCallback((arg: EventClassNamesInfo) => {
     return [arg.event.allDay ? 'fc-all-day' : 'fc-timed']
   }, [])
 
@@ -309,10 +349,10 @@ export default function ScheduleClient() {
 
         /* 이벤트 한 줄 말줄임 */
         .fc .fc-event-title,
-        .fc .fc-event-time {
-          overflow: hidden;
-          white-space: nowrap;
-          text-overflow: ellipsis;
+        .fc .fc-event-time { 
+          overflow: hidden; 
+          white-space: nowrap; 
+          text-overflow: ellipsis; 
         }
 
         /* ✅ 시간 텍스트는 전부 숨김 (요청사항) */
@@ -387,7 +427,7 @@ export default function ScheduleClient() {
           selectMirror
           editable
           dayMaxEventRows={true}
-          moreLinkText={(n) => `+${n}개`}
+          moreLinkText={(n: number) => `+${n}개`}
           datesSet={handleDateSet}
           select={handleSelect}
           eventDrop={handleEventDropOrResize}
@@ -396,11 +436,11 @@ export default function ScheduleClient() {
           events={events}
           /* 전체 기본색은 쓰지 않고, 이벤트별 클래스에서 색상을 분기 */
           eventClassNames={eventClassNames}
-          eventDidMount={(info: EventMountArg) => {
+          eventDidMount={(info: EventDidMountInfo) => {
             if (info.el) info.el.style.cursor = 'pointer'
           }}
           /* 시간 텍스트를 표시하지 않고, 제목만 렌더 */
-          eventContent={(arg: EventContentArg) => {
+          eventContent={(arg: EventContentInfo) => {
             const title = arg.event.title || ''
             return { html: `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</div>` }
           }}
@@ -481,7 +521,7 @@ export default function ScheduleClient() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="block">
-                    <span className="block text-sm font-medium mb-1">시작(시간)</span>
+                    <span className="block text sm font-medium mb-1">시작(시간)</span>
                     <input
                       type="datetime-local"
                       value={form.startInput}
@@ -491,7 +531,7 @@ export default function ScheduleClient() {
                     />
                   </label>
                   <label className="block">
-                    <span className="block text-sm font-medium mb-1">종료(시간)</span>
+                    <span className="block text sm font-medium mb-1">종료(시간)</span>
                     <input
                       type="datetime-local"
                       value={form.endInput}
