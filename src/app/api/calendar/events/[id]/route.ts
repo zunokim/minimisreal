@@ -1,8 +1,17 @@
 // src/app/api/calendar/events/[id]/route.ts
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { google, calendar_v3 } from 'googleapis'
 import { getOAuthClient } from '@/lib/google'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+
+type UpdateEventBody = {
+  title?: string
+  description?: string
+  location?: string
+  allDay?: boolean
+  start?: string
+  end?: string
+}
 
 async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
   const { data, error } = await supabaseAdmin
@@ -24,16 +33,7 @@ async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
   return google.calendar({ version: 'v3', auth: oauth2Client })
 }
 
-type UpdateEventBody = {
-  title?: string
-  description?: string
-  location?: string
-  allDay?: boolean
-  start?: string
-  end?: string
-}
-
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const cal = await getAuthedCalendar()
     const body = (await req.json()) as UpdateEventBody
@@ -44,18 +44,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (typeof body.description === 'string') patch.description = body.description
     if (typeof body.location === 'string') patch.location = body.location
 
-    const allDay: boolean | undefined =
-      typeof body.allDay === 'boolean' ? body.allDay : undefined
+    // allDay 여부에 따라 start/end 포맷 분기
+    const allDay = typeof body.allDay === 'boolean' ? body.allDay : undefined
     const hasStart = typeof body.start === 'string'
     const hasEnd = typeof body.end === 'string'
 
     if (hasStart || hasEnd) {
-      if (allDay || ((body.start?.length === 10) && (!body.end || body.end.length === 10))) {
-        if (hasStart) patch.start = { date: body.start }
-        if (hasEnd) patch.end = { date: body.end }
+      const startRaw = body.start
+      const endRaw = body.end
+      const isDateOnly =
+        allDay ||
+        ((startRaw && startRaw.length === 10) &&
+          (!endRaw || (endRaw && endRaw.length === 10)))
+
+      if (isDateOnly) {
+        if (hasStart && startRaw) patch.start = { date: startRaw }
+        if (hasEnd && endRaw) patch.end = { date: endRaw }
       } else {
-        if (hasStart) patch.start = { dateTime: body.start, timeZone: 'Asia/Seoul' }
-        if (hasEnd) patch.end = { dateTime: body.end, timeZone: 'Asia/Seoul' }
+        if (hasStart && startRaw) patch.start = { dateTime: startRaw, timeZone: 'Asia/Seoul' }
+        if (hasEnd && endRaw) patch.end = { dateTime: endRaw, timeZone: 'Asia/Seoul' }
       }
     }
 
@@ -65,38 +72,37 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       requestBody: patch,
     })
     return NextResponse.json({ event: updated.data })
-  } catch (e: unknown) {
-    const errResp =
-      (e as { response?: { data?: { error?: { message?: string }; error_description?: string; error?: string } } }).response
-        ?.data
-    const msg =
-      errResp?.error?.message ||
-      errResp?.error_description ||
-      errResp?.error ||
+  } catch (e) {
+    // 에러 메시지 뽑기
+    const respData = (e as { response?: { data?: unknown } }).response?.data
+    const message =
+      (respData as { error?: { message?: string } })?.error?.message ||
+      (respData as { error_description?: string })?.error_description ||
+      (respData as { error?: string })?.error ||
       (e as Error).message ||
       'failed_to_update_event'
-    console.error('[calendar/events PATCH] error:', (e as { response?: { data?: unknown } }).response?.data || e)
-    return NextResponse.json({ error: msg }, { status: 500 })
+
+    console.error('[calendar/events PATCH] error:', respData || e)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   try {
     const cal = await getAuthedCalendar()
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
     await cal.events.delete({ calendarId, eventId: params.id })
     return NextResponse.json({ ok: true })
-  } catch (e: unknown) {
-    const errResp =
-      (e as { response?: { data?: { error?: { message?: string }; error_description?: string; error?: string } } }).response
-        ?.data
-    const msg =
-      errResp?.error?.message ||
-      errResp?.error_description ||
-      errResp?.error ||
+  } catch (e) {
+    const respData = (e as { response?: { data?: unknown } }).response?.data
+    const message =
+      (respData as { error?: { message?: string } })?.error?.message ||
+      (respData as { error_description?: string })?.error_description ||
+      (respData as { error?: string })?.error ||
       (e as Error).message ||
       'failed_to_delete_event'
-    console.error('[calendar/events DELETE] error:', (e as { response?: { data?: unknown } }).response?.data || e)
-    return NextResponse.json({ error: msg }, { status: 500 })
+
+    console.error('[calendar/events DELETE] error:', respData || e)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
