@@ -1,3 +1,6 @@
+// ✅ src/app/page.tsx
+// 메인페이지!!!!! 제일 배경임!!
+
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -13,6 +16,7 @@ const links = [
   { name: 'Circle', url: 'https://hisc.circle.hanwha.com/' },
   { name: '외부메일', url: 'https://mail.hanwhawm.com/' },
   { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
+  { name: 'KISIS', url: 'https://fisis.fss.or.kr/' },
   { name: 'Chatgpt', url: 'https://chatgpt.com/' },
   { name: 'DART', url: 'http://dart.fss.or.kr/' },
   { name: '채널H', url: 'https://chhplus.hanwha.com/' },
