@@ -1,16 +1,27 @@
-// src/app/api/calendar/events/[id]/route.ts
+// src/app/api/calendar/events/route.ts
 import { NextResponse } from 'next/server'
 import { google, calendar_v3 } from 'googleapis'
 import { getOAuthClient } from '@/lib/google'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
-type UpdateEventBody = {
-  title?: string
+type ListRange = {
+  timeMin?: string
+  timeMax?: string
+}
+
+type CreateEventBody = {
+  title: string
   description?: string
   location?: string
-  allDay?: boolean
-  start?: string
+  start: string
   end?: string
+  allDay?: boolean
+}
+
+type GoogleErrData = {
+  // Google API는 error가 string 또는 객체일 수 있음
+  error?: { message?: string } | string
+  error_description?: string
 }
 
 async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
@@ -30,92 +41,116 @@ async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
     token_type: data.token_type || undefined,
     expiry_date: data.expiry_date || undefined,
   })
+
   return google.calendar({ version: 'v3', auth: oauth2Client })
 }
 
-function extractEventIdFromUrl(req: Request): string {
-  const url = new URL(req.url)
-  const parts = url.pathname.split('/').filter(Boolean)
-  const eventIdEncoded = parts[parts.length - 1]
-  const eventId = decodeURIComponent(eventIdEncoded || '')
-  if (!eventId) throw new Error('invalid_event_id')
-  return eventId
-}
-
-export async function PATCH(req: Request) {
+// GET: 기간 내 이벤트 목록
+export async function GET(req: Request) {
   try {
     const cal = await getAuthedCalendar()
+    const { searchParams } = new URL(req.url)
+    const timeMin =
+      searchParams.get('timeMin') ||
+      new Date(new Date().setDate(1)).toISOString()
+    const timeMax =
+      searchParams.get('timeMax') ||
+      new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
+
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
-    const eventId = extractEventIdFromUrl(req)
 
-    const body = (await req.json()) as UpdateEventBody
-    const patch: calendar_v3.Schema$Event = {}
-
-    if (typeof body.title === 'string') patch.summary = body.title
-    if (typeof body.description === 'string') patch.description = body.description
-    if (typeof body.location === 'string') patch.location = body.location
-
-    const allDay = typeof body.allDay === 'boolean' ? body.allDay : undefined
-    const hasStart = typeof body.start === 'string'
-    const hasEnd = typeof body.end === 'string'
-
-    if (hasStart || hasEnd) {
-      const startRaw = body.start
-      const endRaw = body.end
-
-      const isDateOnly =
-        allDay ||
-        ((startRaw && startRaw.length === 10) &&
-          (!endRaw || (endRaw && endRaw.length === 10)))
-
-      if (isDateOnly) {
-        if (hasStart && startRaw) patch.start = { date: startRaw }
-        if (hasEnd && endRaw) patch.end = { date: endRaw }
-      } else {
-        if (hasStart && startRaw) patch.start = { dateTime: startRaw, timeZone: 'Asia/Seoul' }
-        if (hasEnd && endRaw) patch.end = { dateTime: endRaw, timeZone: 'Asia/Seoul' }
-      }
-    }
-
-    const updated = await cal.events.patch({
+    const resp = await cal.events.list({
       calendarId,
-      eventId,
-      requestBody: patch,
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: 'startTime',
+      showDeleted: false,
+      maxResults: 2500,
     })
 
-    return NextResponse.json({ event: updated.data })
-  } catch (e) {
-    const respData = (e as { response?: { data?: unknown } }).response?.data
-    const message =
-      (respData as { error?: { message?: string } })?.error?.message ||
-      (respData as { error_description?: string })?.error_description ||
-      (respData as { error?: string })?.error ||
+    return NextResponse.json({ events: resp.data.items || [], calendarId })
+  } catch (e: unknown) {
+    const data = (e as { response?: { data?: GoogleErrData } })?.response?.data
+    const msg =
+      (typeof data?.error === 'string'
+        ? data.error
+        : data?.error?.message) ||
+      data?.error_description ||
       (e as Error).message ||
-      'failed_to_update_event'
+      'failed_to_fetch_events'
 
-    console.error('[calendar/events PATCH] error:', respData || e)
-    return NextResponse.json({ error: message }, { status: 500 })
+    console.error('[calendar/events GET] error:', data || e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
-export async function DELETE(req: Request) {
+// POST: 이벤트 생성
+export async function POST(req: Request) {
   try {
     const cal = await getAuthedCalendar()
+    const body = (await req.json()) as CreateEventBody
+
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
-    const eventId = extractEventIdFromUrl(req)
 
-    await cal.events.delete({ calendarId, eventId })
-    return NextResponse.json({ ok: true })
-  } catch (e) {
-    const respData = (e as { response?: { data?: unknown } }).response?.data
-    const message =
-      (respData as { error?: { message?: string } })?.error?.message ||
-      (respData as { error_description?: string })?.error_description ||
-      (respData as { error?: string })?.error ||
+    const title = body.title || ''
+    const allDay = !!body.allDay
+    const constStartRaw: string = body.start // reassignment 없음
+    let endRaw: string | undefined = body.end // 필요 시 계산하여 재할당
+
+    if (!title || !constStartRaw) throw new Error('title/start is required')
+
+    // Google API 입력 포맷 생성
+    let startObj: calendar_v3.Schema$EventDateTime
+    let endObj: calendar_v3.Schema$EventDateTime
+
+    const isDateOnly =
+      allDay ||
+      (constStartRaw.length === 10 && (!endRaw || endRaw.length === 10))
+
+    if (isDateOnly) {
+      // 올데이: date 사용, end는 종료일의 다음날(FullCalendar와의 호환을 위해 날짜 그대로 전달해도 대부분 동작)
+      if (!endRaw) {
+        const d = new Date(constStartRaw + 'T00:00:00+09:00')
+        const next = new Date(d.getTime() + 24 * 60 * 60 * 1000)
+        endRaw = next.toISOString().slice(0, 10) // YYYY-MM-DD
+      }
+      startObj = { date: constStartRaw }
+      endObj = { date: endRaw }
+    } else {
+      // 시간 지정: dateTime 사용
+      if (!endRaw) {
+        const s = new Date(constStartRaw)
+        const e = new Date(s.getTime() + 60 * 60 * 1000)
+        endRaw = e.toISOString()
+      }
+      startObj = { dateTime: constStartRaw, timeZone: 'Asia/Seoul' }
+      endObj = { dateTime: endRaw, timeZone: 'Asia/Seoul' }
+    }
+
+    const inserted = await cal.events.insert({
+      calendarId,
+      requestBody: {
+        summary: title,
+        description: body.description || '',
+        location: body.location || '',
+        start: startObj,
+        end: endObj,
+      },
+    })
+
+    return NextResponse.json({ event: inserted.data })
+  } catch (e: unknown) {
+    const data = (e as { response?: { data?: GoogleErrData } })?.response?.data
+    const msg =
+      (typeof data?.error === 'string'
+        ? data.error
+        : data?.error?.message) ||
+      data?.error_description ||
       (e as Error).message ||
-      'failed_to_delete_event'
+      'failed_to_create_event'
 
-    console.error('[calendar/events DELETE] error:', respData || e)
-    return NextResponse.json({ error: message }, { status: 500 })
+    console.error('[calendar/events POST] error:', data || e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
