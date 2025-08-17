@@ -16,7 +16,7 @@ const links = [
   { name: 'Circle', url: 'https://hisc.circle.hanwha.com/' },
   { name: '외부메일', url: 'https://mail.hanwhawm.com/' },
   { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
-  { name: 'KISIS', url: 'https://fisis.fss.or.kr/' },
+  { name: '금융통계정보시스템', url: 'https://fisis.fss.or.kr/' },
   { name: 'Chatgpt', url: 'https://chatgpt.com/' },
   { name: 'DART', url: 'http://dart.fss.or.kr/' },
   { name: '채널H', url: 'https://chhplus.hanwha.com/' },
