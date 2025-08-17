@@ -1,4 +1,5 @@
 // src/app/api/kosis/guess-objl/route.ts
+// objl 확인용 실제 구동 x
 import { NextResponse } from 'next/server'
 import { fetchKosisData } from '@/lib/kosis'
 
@@ -92,7 +93,7 @@ export async function GET(req: Request) {
           ? '성공한 objL 코드가 없습니다. candidates 파라미터로 후보를 좁혀 다시 시도해 보세요.'
           : 'hits[0]의 objL을 import 라우트에 그대로 사용해 보세요.',
       // 디버깅용: 어떤 코드가 실패/성공했는지 모두 보고 싶으면 아래 주석 해제
-       tried,
+      // tried,
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
