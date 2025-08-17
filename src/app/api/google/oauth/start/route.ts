@@ -1,18 +1,19 @@
 // src/app/api/google/oauth/start/route.ts
-import { NextResponse, NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getOAuthClient } from '@/lib/google'
 
-export async function GET(_req: NextRequest) {
-  try {
-    const oauth2Client = getOAuthClient()
-    const url = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      prompt: 'consent',
-      scope: ['https://www.googleapis.com/auth/calendar'],
-    })
-    return NextResponse.redirect(url)
-  } catch (e: unknown) {
-    const msg = (e as Error).message || 'oauth_start_failed'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
+export const runtime = 'nodejs'
+
+export async function GET() {
+  const oauth2 = getOAuthClient()
+  const url = oauth2.generateAuthUrl({
+    access_type: 'offline',           // ✅ refresh token 받기
+    prompt: 'consent',                // ✅ 재동의 유도 (최초 1회 확실)
+    include_granted_scopes: true,
+    scope: [
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.readonly',
+    ],
+  })
+  return NextResponse.redirect(url)
 }
