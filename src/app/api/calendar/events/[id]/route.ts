@@ -44,7 +44,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (typeof body.description === 'string') patch.description = body.description
     if (typeof body.location === 'string') patch.location = body.location
 
-    // allDay 여부에 따라 start/end 포맷 분기
     const allDay = typeof body.allDay === 'boolean' ? body.allDay : undefined
     const hasStart = typeof body.start === 'string'
     const hasEnd = typeof body.end === 'string'
@@ -73,7 +72,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     })
     return NextResponse.json({ event: updated.data })
   } catch (e) {
-    // 에러 메시지 뽑기
     const respData = (e as { response?: { data?: unknown } }).response?.data
     const message =
       (respData as { error?: { message?: string } })?.error?.message ||
@@ -87,11 +85,19 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+// ✅ DELETE: 두 번째 인자 제거, URL 경로에서 id 추출
+export async function DELETE(req: Request) {
   try {
     const cal = await getAuthedCalendar()
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
-    await cal.events.delete({ calendarId, eventId: params.id })
+
+    const url = new URL(req.url)
+    const parts = url.pathname.split('/').filter(Boolean)
+    const eventIdEncoded = parts[parts.length - 1]
+    const eventId = decodeURIComponent(eventIdEncoded || '')
+    if (!eventId) throw new Error('invalid_event_id')
+
+    await cal.events.delete({ calendarId, eventId })
     return NextResponse.json({ ok: true })
   } catch (e) {
     const respData = (e as { response?: { data?: unknown } }).response?.data
