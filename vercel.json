@@ -1,5 +1,4 @@
 // vercel.json
-
 {
   "crons": [
     { "path": "/api/cron/kosis", "schedule": "0 0 * * *" },          // 00:00 UTC (= KST 09:00)
