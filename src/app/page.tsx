@@ -91,7 +91,7 @@ export default function Home() {
         <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
           ✔︎ Just Do It!
         </h1>
-        <p className="mt-1 text-sm text-gray-500">하싫핑 하방방</p>
+        <p className="mt-1 text-sm text-gray-500">하싫핑 하하방</p>
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
