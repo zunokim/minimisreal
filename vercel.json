@@ -1,8 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron/kosis", "schedule": "0 0 * * *" },          // 00:00 UTC (= KST 09:00)
-    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 22 * * *" }, // UTC 22:00 (= KST 07:00)
-    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 13 * * *" }  // UTC 13:00 (= KST 22:00)
+    { "path": "/api/cron/kosis", "schedule": "0 0 * * *" },
+    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 22 * * *" },
+    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 13 * * *" }
   ]
 }
 
