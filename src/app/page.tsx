@@ -16,9 +16,10 @@ interface WeatherData {
 const externalLinks = [
   { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
   { name: '금융통계정보시스템', url: 'https://fisis.fss.or.kr/' },
-  { name: 'Chatgpt', url: 'https://chatgpt.com/' },
   { name: 'DART', url: 'http://dart.fss.or.kr/' },
   { name: '금융보안원', url: 'https://edu.fsec.or.kr/' },
+  { name: '금융감독원', url: 'https://www.fss.or.kr/' },
+  { name: 'Chatgpt', url: 'https://chatgpt.com/' },
 ]
 
 const internalLinks = [
@@ -156,55 +157,48 @@ export default function Home() {
           )}
         </Card>
 
-        {/* 링크 카드: 외부/내부 섹션 */}
-        <Card enterDelay={0.24} className="xl:col-span-1 lg:col-span-2">
-          <CardTitle>사이트 바로가기</CardTitle>
+        {/* ✅ 외부 사이트 카드 (넓게, 향후 확장 대비) */}
+        <Card enterDelay={0.24} className="xl:col-span-2 lg:col-span-2">
+          <CardTitle>외부 사이트 바로가기</CardTitle>
+          <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {externalLinks.map((l) => (
+              <li key={l.url}>
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
+                >
+                  <span className="text-sm font-medium group-hover:underline break-all">
+                    {l.name}
+                  </span>
+                  <span className="block text-xs text-gray-500 truncate">{l.url}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </Card>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 외부 사이트 */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">외부 사이트</h3>
-              <ul className="grid grid-cols-1 gap-3">
-                {externalLinks.map((l) => (
-                  <li key={l.url}>
-                    <a
-                      href={l.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
-                    >
-                      <span className="text-sm font-medium group-hover:underline break-all">
-                        {l.name}
-                      </span>
-                      <span className="block text-xs text-gray-500 truncate">{l.url}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </section>
-
-            {/* 내부 사이트 */}
-            <section>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">내부 사이트</h3>
-              <ul className="grid grid-cols-1 gap-3">
-                {internalLinks.map((l) => (
-                  <li key={l.url}>
-                    <a
-                      href={l.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
-                    >
-                      <span className="text-sm font-medium group-hover:underline break-all">
-                        {l.name}
-                      </span>
-                      <span className="block text-xs text-gray-500 truncate">{l.url}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </div>
+        {/* ✅ 내부 사이트 카드 (별도 분리) */}
+        <Card enterDelay={0.3} className="xl:col-span-1 lg:col-span-1">
+          <CardTitle>내부 사이트 바로가기</CardTitle>
+          <ul className="mt-4 grid grid-cols-1 gap-3">
+            {internalLinks.map((l) => (
+              <li key={l.url}>
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
+                >
+                  <span className="text-sm font-medium group-hover:underline break-all">
+                    {l.name}
+                  </span>
+                  <span className="block text-xs text-gray-500 truncate">{l.url}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
         </Card>
       </div>
     </div>
