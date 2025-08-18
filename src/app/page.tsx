@@ -12,15 +12,19 @@ interface WeatherData {
   location: { name: string }
 }
 
-const links = [
-  { name: 'Circle', url: 'https://hisc.circle.hanwha.com/' },
-  { name: '외부메일', url: 'https://mail.hanwhawm.com/' },
+// 🔹 외부/내부 링크 분리
+const externalLinks = [
   { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
   { name: '금융통계정보시스템', url: 'https://fisis.fss.or.kr/' },
   { name: 'Chatgpt', url: 'https://chatgpt.com/' },
   { name: 'DART', url: 'http://dart.fss.or.kr/' },
-  { name: '채널H', url: 'https://chhplus.hanwha.com/' },
   { name: '금융보안원', url: 'https://edu.fsec.or.kr/' },
+]
+
+const internalLinks = [
+  { name: 'Circle', url: 'https://hisc.circle.hanwha.com/' },
+  { name: '외부메일', url: 'https://mail.hanwhawm.com/' },
+  { name: '채널H', url: 'https://chhplus.hanwha.com/' },
 ]
 
 function formatKoreanDate(d: Date) {
@@ -103,9 +107,9 @@ export default function Home() {
           </div>
 
           <div className="mt-4">
-            {/* SSR과의 불일치 경고 억제 (초기엔 빈 문자열, 이후 클라에서 채움) */}
+            {/* SSR과의 불일치 경고 억제 */}
             <div className="text-lg text-gray-700" suppressHydrationWarning>
-              {dateText || ' '}
+              {dateText || ' '}
             </div>
             <div
               className="mt-1 text-4xl md:text-5xl font-bold tracking-tight"
@@ -120,7 +124,7 @@ export default function Home() {
         <Card enterDelay={0.12}>
           <CardTitle>퇴근까지</CardTitle>
           <div className="mt-4 text-lg" suppressHydrationWarning>
-            {remainingText || ' '}
+            {remainingText || ' '}
           </div>
           <p className="mt-2 text-sm text-gray-500">오늘도 파이팅입니다 💪</p>
         </Card>
@@ -152,26 +156,55 @@ export default function Home() {
           )}
         </Card>
 
-        {/* 링크 카드 */}
+        {/* 링크 카드: 외부/내부 섹션 */}
         <Card enterDelay={0.24} className="xl:col-span-1 lg:col-span-2">
           <CardTitle>사이트 바로가기</CardTitle>
-          <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {links.map((l) => (
-              <li key={l.url}>
-                <a
-                  href={l.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
-                >
-                  <span className="text-sm font-medium group-hover:underline break-all">
-                    {l.name}
-                  </span>
-                  <span className="block text-xs text-gray-500 truncate">{l.url}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 외부 사이트 */}
+            <section>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">외부 사이트</h3>
+              <ul className="grid grid-cols-1 gap-3">
+                {externalLinks.map((l) => (
+                  <li key={l.url}>
+                    <a
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
+                    >
+                      <span className="text-sm font-medium group-hover:underline break-all">
+                        {l.name}
+                      </span>
+                      <span className="block text-xs text-gray-500 truncate">{l.url}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            {/* 내부 사이트 */}
+            <section>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">내부 사이트</h3>
+              <ul className="grid grid-cols-1 gap-3">
+                {internalLinks.map((l) => (
+                  <li key={l.url}>
+                    <a
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group block rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm hover:shadow transition-shadow"
+                    >
+                      <span className="text-sm font-medium group-hover:underline break-all">
+                        {l.name}
+                      </span>
+                      <span className="block text-xs text-gray-500 truncate">{l.url}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
         </Card>
       </div>
     </div>
