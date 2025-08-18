@@ -1,3 +1,4 @@
+
 {
   "crons": [
     { "path": "/api/cron/kosis", "schedule": "0 0 * * *" },
@@ -5,4 +6,3 @@
     { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 13 * * *" }
   ]
 }
-
