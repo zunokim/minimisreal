@@ -245,6 +245,7 @@ export default function DartAnalysisPage() {
   const toggleAll = () => {
     allSelected ? setSelectedCorps([]) : setSelectedCorps(corps.map((c) => c.corp_code))
   }
+  
   const toggleCorp = (code: string, checked: boolean) => {
     setSelectedCorps((prev) => (checked ? Array.from(new Set([...prev, code])) : prev.filter((c) => c !== code)))
   }
