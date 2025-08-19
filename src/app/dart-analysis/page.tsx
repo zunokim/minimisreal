@@ -501,7 +501,7 @@ export default function DartAnalysisPage() {
                       ))}
                     </Bar>
                     {/* 전기(회색, 한화는 연주황) */}
-                    {!showCurrentOnly && (
+                    {showCurrentOnly ? null : (
                       <Bar dataKey="fr_scaled" name="전기금액" fill={FR_COLOR_DEFAULT}>
                         {scaledRows.map((r) => (
                           <Cell key={`fr-${r.corp_code}`} fill={r.corp_name === HIGHLIGHT_CORP ? HIGHLIGHT_BAR : FR_COLOR_DEFAULT} opacity={r.corp_name === HIGHLIGHT_CORP ? 0.7 : 1} />
@@ -523,7 +523,7 @@ export default function DartAnalysisPage() {
             <tr>
               <th className="px-3 py-2 text-left">회사</th>
               <th className="px-3 py-2 text-right">당기 ({UNITS.find((u) => u.value === unit)?.label})</th>
-              {!showCurrentOnly && (
+              {showCurrentOnly ? null : (
                 <>
                   <th className="px-3 py-2 text-right">전기 ({UNITS.find((u) => u.value === unit)?.label})</th>
                   <th className="px-3 py-2 text-right">증감 Δ ({UNITS.find((u) => u.value === unit)?.label})</th>
@@ -541,7 +541,7 @@ export default function DartAnalysisPage() {
                   <td className="px-3 py-2">{r.corp_name}</td>
                   <td className="px-3 py-2 text-right">{fmt(round2(r.th_scaled))}</td>
 
-                  {!showCurrentOnly && (
+                  {showCurrentOnly ? null : (
                     <>
                       <td className="px-3 py-2 text-right">{fmt(round2(r.fr_scaled))}</td>
                       <td className={`px-3 py-2 text-right ${signClass(delta)}`}>{fmt(round2(delta))}</td>

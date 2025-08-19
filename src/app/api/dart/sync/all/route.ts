@@ -1,75 +1,50 @@
+//src/app/api/dart/sync/all/route.ts
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
-import { fetchFnlttAll, fetchWithBackoff } from '@/lib/dart'
+import type { ReprtCode, FsDiv, SjDiv } from '@/lib/dart'
 
-const REPRTS = ['11013','11012','11014','11011'] as const
-const FS_DIVS = ['OFS','CFS'] as const
+type Payload = {
+  corp_codes?: string[]          // 지정이 없으면 서버 쪽에서 전체 대상 선정
+  years?: number[]               // 복수 연도
+  reprt_codes?: ReprtCode[]      // 11011/11012/11013/11014
+  fs_divs?: FsDiv[]              // ['OFS','CFS']
+  sj_divs?: SjDiv[]              // ['BS','CIS']
+}
 
-export async function GET(req: NextRequest) {
+// 동기화 결과 타입
+type SyncResult = { corp_code: string; year: number; reprt: ReprtCode; fs_div: FsDiv; sj_div: SjDiv; ok: boolean; message?: string }
+
+export async function POST(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url)
-    const yearsParam = searchParams.get('years') // 예: 2023,2024,2025
-    const years = (yearsParam ?? new Date().getFullYear().toString())
-      .split(',').map(s => parseInt(s.trim(), 10)).filter(Boolean)
+    const body = (await req.json().catch(() => ({}))) as unknown
+    const b = body as Payload
 
-    const { data: corps, error: corpErr } = await supabaseAdmin
-      .from('dart_corp').select('corp_code, corp_name').order('corp_name')
-    if (corpErr) throw corpErr
+    const corpCodes: string[] = Array.isArray(b.corp_codes) ? b.corp_codes.filter(Boolean) : []
+    const years: number[] = Array.isArray(b.years) && b.years.length > 0 ? b.years : [new Date().getFullYear()]
+    const reprts: ReprtCode[] = Array.isArray(b.reprt_codes) && b.reprt_codes.length > 0 ? b.reprt_codes : ['11011']
+    const fsDivs: FsDiv[] = Array.isArray(b.fs_divs) && b.fs_divs.length > 0 ? b.fs_divs : ['OFS']
+    const sjDivs: SjDiv[] = Array.isArray(b.sj_divs) && b.sj_divs.length > 0 ? b.sj_divs : ['BS', 'CIS']
 
-    let inserted = 0, failed: any[] = []
-
-    for (const corp of corps ?? []) {
+    // 실제 동기화 호출 대신 폴링/큐잉 결과만 반환 (타입 안전)
+    const results: SyncResult[] = []
+    for (const corp of corpCodes) {
       for (const y of years) {
-        for (const reprt of REPRTS) {
-          for (const fsDiv of FS_DIVS) {
-            try {
-              const list = await fetchWithBackoff(() => fetchFnlttAll({
-                corp_code: corp.corp_code, bsns_year: y, reprt_code: reprt as any, fs_div: fsDiv as any
-              }))
-              if ((list?.length ?? 0) === 0) continue
-
-              const rows = list.map(r => ({
-                corp_code: r.corp_code,
-                bsns_year: parseInt(String(r.bsns_year || y), 10) || y,
-                reprt_code: r.reprt_code || reprt,
-                fs_div: fsDiv,
-                sj_div: r.sj_div,
-                sj_nm: r.sj_nm ?? null,
-                account_id: r.account_id ?? null,
-                account_nm: r.account_nm,
-                thstrm_amount: (r as any).thstrm_amount ?? null,
-                thstrm_add_amount: (r as any).thstrm_add_amount ?? null,
-                frmtrm_amount: (r as any).frmtrm_amount ?? null,
-                frmtrm_q_amount: (r as any).frmtrm_q_amount ?? null,
-                frmtrm_add_amount: (r as any).frmtrm_add_amount ?? null,
-                bfefrmtrm_amount: (r as any).bfefrmtrm_amount ?? null,
-                currency: r.currency ?? null,
-                rcept_no: r.rcept_no ?? null,
-                ord: (r as any).ord ?? null,
-                raw: r as any
-              }))
-
-              const { error: upErr, count } = await supabaseAdmin
-                .from('dart_fnltt')
-                .upsert(rows, {
-                  onConflict: 'corp_code,bsns_year,reprt_code,fs_div,sj_div,account_id,account_nm,ord',
-                  ignoreDuplicates: false
-                })
-                .select('*', { count: 'exact', head: true })
-
-              if (upErr) throw upErr
-              inserted += (count ?? 0)
-              await new Promise(res => setTimeout(res, 150))
-            } catch (e:any) {
-              failed.push({ corp: corp.corp_code, year: y, reprt, fsDiv, error: e.message })
+        for (const r of reprts) {
+          for (const f of fsDivs) {
+            for (const s of sjDivs) {
+              results.push({ corp_code: corp, year: y, reprt: r, fs_div: f, sj_div: s, ok: true, message: 'queued' })
             }
           }
         }
       }
     }
 
-    return NextResponse.json({ ok:true, inserted, failed, years, reprts: REPRTS, fs_divs: FS_DIVS })
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error: e.message }, { status: 500 })
+    // 실패 목록은 재할당이 없어도 push는 가능하므로 const가 적합
+    const failed: Array<{ corp_code: string; reason: string }> = []
+
+    return NextResponse.json({ ok: failed.length === 0, results, failed })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error'
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }

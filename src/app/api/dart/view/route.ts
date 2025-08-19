@@ -2,37 +2,52 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import type { ReprtCode, FsDiv, SjDiv } from '@/lib/dart'
+
+type Row = {
+  corp_code: string
+  bsns_year: number
+  reprt_code: ReprtCode
+  fs_div: FsDiv
+  sj_div: SjDiv
+  account_nm: string | null
+  account_id: string | null
+  thstrm_amount: number | null
+  frmtrm_amount: number | null
+  ord?: number | null
+  currency?: string | null
+}
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const year = parseInt(searchParams.get('year') ?? `${new Date().getFullYear()}`, 10)
+  try {
+    const { searchParams } = new URL(req.url)
+    const year = Number(searchParams.get('year') ?? new Date().getFullYear())
+    const reprt = (searchParams.get('reprt') ?? '11011') as ReprtCode
+    const fsDiv = (searchParams.get('fs_div') ?? 'OFS') as FsDiv
+    const sjDiv = (searchParams.get('sj_div') ?? 'BS') as SjDiv
+    const corpCode = (searchParams.get('corp_code') ?? '').trim()
+    const accountNm = (searchParams.get('account_nm') ?? '').trim()
+    const accountId = (searchParams.get('account_id') ?? '').trim() || null
 
-  // ✅ 단일회사(OFS) + BS/CIS
-  const { data, error } = await supabaseAdmin
-    .from('dart_fnltt')
-    .select(`
-      corp_code, bsns_year, sj_div, account_nm,
-      thstrm_amount, frmtrm_amount,
-      dart_corp:corp_code ( corp_name )
-    `)
-    .eq('bsns_year', year)
-    .eq('reprt_code', '11011')
-    .eq('fs_div', 'OFS')     // ✅ OFS로 필터
-    .in('sj_div', ['BS','CIS'])
-    .order('corp_code')
-    .order('sj_div')
-    .order('ord', { nullsFirst: true })
+    let q = supabaseAdmin
+      .from('dart_fnltt')
+      .select('*')
+      .eq('bsns_year', year)
+      .eq('reprt_code', reprt)
+      .eq('fs_div', fsDiv)
+      .eq('sj_div', sjDiv)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (corpCode) q = q.eq('corp_code', corpCode)
+    if (accountId) q = q.eq('account_id', accountId)
+    else if (accountNm) q = q.eq('account_nm', accountNm)
 
-  const rows = (data ?? []).map((r:any) => ({
-    corp_code: r.corp_code,
-    corp_name: r.dart_corp?.corp_name ?? r.corp_code,
-    bsns_year: r.bsns_year,
-    sj_div: r.sj_div,
-    account_nm: r.account_nm,
-    thstrm_amount: r.thstrm_amount,
-    frmtrm_amount: r.frmtrm_amount
-  }))
-  return NextResponse.json({ rows, fs_div: 'OFS' })
+    const { data, error } = await q
+    if (error) throw error
+
+    const list: Row[] = (data ?? []) as Row[]
+    return NextResponse.json({ ok: true, list })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error'
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+  }
 }
