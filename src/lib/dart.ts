@@ -1,5 +1,4 @@
 // src/lib/dart.ts
-/* eslint-disable @typescript-eslint/consistent-type-definitions */
 
 export type ReprtCode = '11011' | '11012' | '11013' | '11014'
 export type FsDiv = 'OFS' | 'CFS'
