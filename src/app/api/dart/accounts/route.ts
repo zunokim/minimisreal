@@ -2,14 +2,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
+type ReprtCode = '11011' | '11012' | '11013' | '11014'
+type FsDiv = 'OFS' | 'CFS'
+type SjDiv = 'BS' | 'CIS'
+
+type Row = {
+  account_nm: string | null
+  account_id: string | null
+}
+
+type AccountItem = {
+  account_nm: string
+  account_id: string | null
+  key: string
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
-    const year = parseInt(searchParams.get('year') ?? `${new Date().getFullYear()}`, 10)
-    const reprt = (searchParams.get('reprt') ?? '11011') as '11011'|'11012'|'11013'|'11014'
-    const fsDiv = (searchParams.get('fs_div') ?? 'OFS') as 'OFS'|'CFS'
-    const sjDiv = (searchParams.get('sj_div') ?? 'BS') as 'BS'|'CIS'
+    const year = Number(searchParams.get('year') ?? new Date().getFullYear())
+    const reprt = (searchParams.get('reprt') ?? '11011') as ReprtCode
+    const fsDiv = (searchParams.get('fs_div') ?? 'OFS') as FsDiv
+    const sjDiv = (searchParams.get('sj_div') ?? 'BS') as SjDiv
 
+    // 계정 목록(중복 제거)
     const { data, error } = await supabaseAdmin
       .from('dart_fnltt')
       .select('account_nm, account_id')
@@ -20,22 +36,26 @@ export async function GET(req: NextRequest) {
 
     if (error) throw error
 
-    const seen = new Set<string>()
-    const list: { account_nm: string; account_id: string | null; key: string }[] = []
-
-    for (const r of (data ?? [])) {
-      const nm = (r.account_nm ?? '').trim().replace(/\s+/g, ' ')
-      const id = r.account_id ?? null
+    const uniq = new Map<string, AccountItem>()
+    for (const r of (data ?? []) as Row[]) {
+      const nm = (r.account_nm ?? '').trim()
+      if (!nm) continue
+      const id = r.account_id
       const key = `${id ?? 'NA'}|${nm}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      list.push({ account_nm: nm, account_id: id, key })
+      if (!uniq.has(key)) {
+        uniq.set(key, { account_nm: nm, account_id: id, key })
+      }
     }
 
-    list.sort((a, b) => a.account_nm.localeCompare(b.account_nm, 'ko'))
+    // 이름 오름차순
+    const list = Array.from(uniq.values()).sort((a, b) =>
+      a.account_nm.localeCompare(b.account_nm, 'ko')
+    )
+
     return NextResponse.json({ ok: true, list })
-  } catch (e:any) {
-    return NextResponse.json({ ok: false, error: e.message }, { status: 500 })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Unknown error'
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }
 
