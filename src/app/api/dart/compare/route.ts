@@ -28,6 +28,13 @@ type CompareRow = {
   frmtrm_amount: number
 }
 
+/** UI에서 'PL'을 보내도 DB는 'CIS'를 쓰므로 안전하게 매핑 */
+function normalizeSjDiv(v?: string | null): SjDiv {
+  const s = (v ?? '').toUpperCase()
+  if (s === 'CIS' || s === 'PL' || s === 'IS') return 'CIS'
+  return 'BS'
+}
+
 // 모든 CanonKey 집합 (타입 가드용)
 const ALL_CANON_KEYS: readonly CanonKey[] = [
   ...CANON_OPTIONS.BS.map((o) => o.key),
@@ -41,10 +48,13 @@ function isCanonKey(s: string): s is CanonKey {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
+
     const year = Number(searchParams.get('year') ?? new Date().getFullYear())
     const reprt = (searchParams.get('reprt') ?? '11011') as ReprtCode
     const fsDiv = (searchParams.get('fs_div') ?? 'OFS') as FsDiv
-    const sjDiv = (searchParams.get('sj_div') ?? 'BS') as SjDiv
+
+    // 🔒 'PL' → 'CIS' 자동 정규화
+    const sjDiv = normalizeSjDiv(searchParams.get('sj_div'))
 
     const canonKeyRaw = (searchParams.get('canon_key') ?? '').trim()
     const canonKey: CanonKey | null = canonKeyRaw && isCanonKey(canonKeyRaw) ? (canonKeyRaw as CanonKey) : null
@@ -63,6 +73,10 @@ export async function GET(req: NextRequest) {
       )
     }
 
+    // ─────────────────────────────────────────────────────────
+    // 쿼리: ⚠️ canon_key로 미리 필터링하지 않습니다.
+    //      (캐시가 비어있을 때도 온더플라이 분류가 가능하도록)
+    // ─────────────────────────────────────────────────────────
     let q = supabaseAdmin
       .from('dart_fnltt')
       .select(`
@@ -78,9 +92,8 @@ export async function GET(req: NextRequest) {
 
     if (corpCodes.length > 0) q = q.in('corp_code', corpCodes)
 
-    if (canonKey) {
-      q = q.eq('canon_key', canonKey)
-    } else {
+    // 원천 기준으로 조회하는 경우에만 원천 필터 적용
+    if (!canonKey) {
       if (accountId) q = q.eq('account_id', accountId)
       else q = q.eq('account_nm', accountNm)
     }
@@ -92,39 +105,43 @@ export async function GET(req: NextRequest) {
     const byCorp = new Map<string, CompareRow>()
 
     if (canonKey) {
-      // 1) 캐시 우선: 회사별로 canon_score가 가장 높은 1건만 대표로 사용
+      // ───────────────────────────────────────────────────
+      // 캐논 기준: 캐시가 있으면 활용, 없으면 즉석 분류로 매칭
+      // 회사별로 최고 score 1건을 대표로 사용
+      // ───────────────────────────────────────────────────
       const bucket = new Map<
         string,
         { corp_code: string; corp_name: string; th: number; fr: number; score: number }
       >()
 
       for (const r of rows) {
+        let matched = false
+        let score = 0
+
+        // 1) 캐시 우선
+        if (r.canon_key === canonKey && typeof r.canon_score === 'number') {
+          matched = true
+          score = r.canon_score
+        } else {
+          // 2) 온더플라이 분류
+          const c = classifyToCanon(sjDiv, r.account_id, r.account_nm)
+          if (c && c.key === canonKey) {
+            matched = true
+            score = c.score
+          }
+        }
+
+        if (!matched) continue
+
         const corp = r.corp_code
         const corpName = r.dart_corp?.corp_name ?? corp
         const th = r.thstrm_amount ?? 0
         const fr = r.frmtrm_amount ?? 0
-        const score = typeof r.canon_score === 'number' ? r.canon_score : 0
         const prev = bucket.get(corp)
         const cand = { corp_code: corp, corp_name: corpName, th, fr, score }
+
         if (!prev || cand.score > prev.score || (cand.score === prev.score && Math.abs(cand.th) > Math.abs(prev.th))) {
           bucket.set(corp, cand)
-        }
-      }
-
-      // 2) 캐시가 전무/부족할 경우 온더플라이 분류로 보강
-      if (bucket.size === 0) {
-        for (const r of rows) {
-          const c = classifyToCanon(sjDiv, r.account_id, r.account_nm)
-          if (!c || c.key !== canonKey) continue
-          const corp = r.corp_code
-          const corpName = r.dart_corp?.corp_name ?? corp
-          const th = r.thstrm_amount ?? 0
-          const fr = r.frmtrm_amount ?? 0
-          const prev = bucket.get(corp)
-          const cand = { corp_code: corp, corp_name: corpName, th, fr, score: c.score }
-          if (!prev || cand.score > prev.score || (cand.score === prev.score && Math.abs(cand.th) > Math.abs(prev.th))) {
-            bucket.set(corp, cand)
-          }
         }
       }
 
@@ -137,13 +154,17 @@ export async function GET(req: NextRequest) {
         })
       }
     } else {
+      // ───────────────────────────────────────────────────
       // 원천 기준: 같은 회사의 동일 원천계정( account_id + account_nm )을 합산
+      // ───────────────────────────────────────────────────
       const keyOf = (r: FnlttRow) => `${r.corp_code}|${r.account_id ?? 'NA'}|${r.account_nm ?? ''}`
       const seen = new Set<string>()
+
       for (const r of rows) {
         const k = keyOf(r)
         if (seen.has(k)) continue
         seen.add(k)
+
         const corp = r.corp_code
         const corpName = r.dart_corp?.corp_name ?? corp
         const th = r.thstrm_amount ?? 0
