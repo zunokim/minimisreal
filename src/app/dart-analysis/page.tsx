@@ -67,8 +67,8 @@ export default function DartAnalysisPage() {
   const [showCurrentOnly, setShowCurrentOnly] = useState<boolean>(false)
 
   // 계정 선택 모드 (기본: 원천)
-  const [mode, setMode] = useState<'raw' | 'canon'>('raw')
-  const [canonKey, setCanonKey] = useState<string>('')
+  const [mode, setMode] = useState<'raw' | 'canon'>('canon')
+  const [canonKey, setCanonKey] = useState<string>('매출액')
 
   // 계정 검색/선택(원천 모드)
   const [accounts, setAccounts] = useState<AccountItem[]>([])
