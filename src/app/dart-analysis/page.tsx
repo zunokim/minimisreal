@@ -12,6 +12,9 @@ import { CANON_OPTIONS } from '@/lib/accountCanonical'
 type AccountItem = { account_nm: string; account_id: string | null; key: string }
 type CompareRow = { corp_code: string; corp_name: string; thstrm_amount: number; frmtrm_amount: number }
 type CorpItem = { corp_code: string; corp_name: string }
+type ReprtCode = typeof REPRTS[number]['code']
+type FsDiv = 'OFS' | 'CFS'
+type SjDiv = 'BS' | 'CIS'
 
 const REPRTS = [
   { code: '11011', name: '사업보고서(연간)' },
@@ -32,8 +35,8 @@ const UNITS = [
 const TH_COLOR_DEFAULT = '#111827' // 검정
 const FR_COLOR_DEFAULT = '#9ca3af' // 회색
 const HIGHLIGHT_CORP = '한화투자증권'
-const HIGHLIGHT_BAR = '#FDBA74'    // 막대: 옅은 주황
-const HIGHLIGHT_ROW = '#FFF7ED'    // 표 행 배경: 매우 옅은 주황(orange-50)
+const HIGHLIGHT_BAR = '#FDBA74'    // 막대
+const HIGHLIGHT_ROW = '#FFF7ED'    // 표 행 배경
 
 const parseAccountKey = (key: string) => {
   const idx = key.indexOf('|')
@@ -47,9 +50,9 @@ export default function DartAnalysisPage() {
   // 초기값
   const defaultYear = new Date().getFullYear() - 1
   const [year, setYear] = useState<number>(defaultYear)
-  const [reprt, setReprt] = useState<'11011'|'11012'|'11013'|'11014'>('11011')
-  const [fsDiv, setFsDiv] = useState<'OFS'|'CFS'>('OFS')
-  const [sjDiv, setSjDiv] = useState<'BS'|'CIS'>('CIS') // UI표기: PL
+  const [reprt, setReprt] = useState<ReprtCode>('11011')
+  const [fsDiv, setFsDiv] = useState<FsDiv>('OFS')
+  const [sjDiv, setSjDiv] = useState<SjDiv>('CIS') // UI표기: PL
   const sjLabel = sjDiv === 'BS' ? 'BS' : 'PL'
 
   const [unit, setUnit] = useState<number>(100_000_000) // 억원
@@ -75,7 +78,7 @@ export default function DartAnalysisPage() {
   const [loadingCompare, setLoadingCompare] = useState(false)
 
   const fmt = (v?: number) => (v == null ? '-' : v.toLocaleString())
-  const signClass = (n: number) => n > 0 ? 'text-red-600' : n < 0 ? 'text-blue-600' : ''
+  const signClass = (n: number) => (n > 0 ? 'text-red-600' : n < 0 ? 'text-blue-600' : '')
 
   // 회사 목록
   useEffect(() => {
@@ -83,7 +86,7 @@ export default function DartAnalysisPage() {
       setLoadingCorps(true)
       try {
         const res = await fetch('/api/dart/corps')
-        const data = await res.json()
+        const data = (await res.json()) as { list?: CorpItem[] }
         const list: CorpItem[] = data?.list ?? []
         setCorps(list)
         setSelectedCorps(list.map(c => c.corp_code)) // 전체 선택
@@ -105,7 +108,7 @@ export default function DartAnalysisPage() {
       try {
         const q = new URLSearchParams({ year: String(year), reprt, fs_div: fsDiv, sj_div: sjDiv })
         const res = await fetch(`/api/dart/accounts?` + q.toString())
-        const data = await res.json()
+        const data = (await res.json()) as { list?: AccountItem[] }
         const list: AccountItem[] = data?.list ?? []
         setAccounts(list)
         if (!list.find(a => a.key === selKey)) setSelKey(list[0]?.key ?? '')
@@ -129,8 +132,7 @@ export default function DartAnalysisPage() {
 
   const canQuery = useMemo(() => {
     if (selectedCorps.length === 0) return false
-    if (mode === 'canon') return !!canonKey
-    return !!selKey
+    return mode === 'canon' ? !!canonKey : !!selKey
   }, [mode, canonKey, selKey, selectedCorps.length])
 
   // 비교 데이터 로드
@@ -142,7 +144,6 @@ export default function DartAnalysisPage() {
         year: String(year), reprt, fs_div: fsDiv, sj_div: sjDiv,
         corp_codes: selectedCorps.join(','),
       })
-
       if (mode === 'canon') {
         q.set('canon_key', canonKey)
       } else {
@@ -150,23 +151,31 @@ export default function DartAnalysisPage() {
         q.set('account_nm', account_nm)
         if (account_id) q.set('account_id', account_id)
       }
-
       const res = await fetch(`/api/dart/compare?` + q.toString())
-      const data = await res.json()
+      const data = (await res.json()) as { rows?: CompareRow[] }
       setRows(data?.rows ?? [])
     } finally { setLoadingCompare(false) }
   }
 
-  // 자동 1회 조회
-  useEffect(() => { if (mode==='raw'   && selKey   && selectedCorps.length) loadCompare() }, [mode, selKey]) // eslint-disable-line
-  useEffect(() => { if (mode==='canon' && canonKey && selectedCorps.length) loadCompare() }, [mode, canonKey]) // eslint-disable-line
+  // 자동 1회 조회 (deps 정리)
+  useEffect(() => {
+    if (mode === 'raw' && selKey && selectedCorps.length) {
+      void loadCompare()
+    }
+  }, [mode, selKey, selectedCorps.length]) // ✅ no-unused-expressions 회피
+
+  useEffect(() => {
+    if (mode === 'canon' && canonKey && selectedCorps.length) {
+      void loadCompare()
+    }
+  }, [mode, canonKey, selectedCorps.length])
 
   // 스케일링 + Δ/%
   const scaledRows = useMemo(() => {
     const div = unit || 1
     return rows.map(r => {
-      const th = (r.thstrm_amount ?? 0)
-      const fr = (r.frmtrm_amount ?? 0)
+      const th = r.thstrm_amount ?? 0
+      const fr = r.frmtrm_amount ?? 0
       const delta = th - fr
       const pct = fr === 0 ? null : (delta / Math.abs(fr)) * 100
       return {
@@ -182,7 +191,7 @@ export default function DartAnalysisPage() {
   // 엑셀 (현재 뷰 기준)
   const exportExcel = () => {
     const unitLabel = UNITS.find(u=>u.value===unit)?.label ?? '원'
-    const meta = [
+    const meta: (string | number | boolean)[][] = [
       ['연도', year],
       ['보고서', REPRTS.find(r=>r.code===reprt)?.name ?? reprt],
       ['재무제표구분', fsDiv],
@@ -194,11 +203,14 @@ export default function DartAnalysisPage() {
       ['당기만 보기', showCurrentOnly ? '예' : '아니오'],
     ]
     const table = scaledRows.map(r => {
-      const base: Record<string, any> = { '회사': r.corp_name, [`당기(${unitLabel})`]: round2(r.th_scaled) }
+      const base: Record<string, number | string> = {
+        '회사': r.corp_name,
+        [`당기(${unitLabel})`]: round2(r.th_scaled),
+      }
       if (!showCurrentOnly) {
         base[`전기(${unitLabel})`] = round2(r.fr_scaled)
         base[`증감Δ(${unitLabel})`] = round2(r.delta_scaled)
-        base['증감(%)'] = r.pct == null ? '-' : round2(r.pct)
+        base['증감(%)'] = r.pct == null ? '-' : String(round2(r.pct))
       }
       return base
     })
@@ -221,12 +233,15 @@ export default function DartAnalysisPage() {
   // 차트 폭(모바일 가로 스크롤)
   const chartWidth = Math.max(640, scaledRows.length * 80)
 
-  // 공통 컨트롤 클래스: 유동 폰트 + 높이 통일 + 라운드
+  // 공통 컨트롤 클래스
   const ctrlCls = 'w-full min-w-0 text-[clamp(12px,1.05vw,14px)] h-10 md:h-10 px-3 py-2 rounded-md border border-zinc-300 bg-white'
+
+  // Tooltip 포매터 (any 제거)
+  const tooltipFmt = (v: unknown) => (typeof v === 'number' ? v.toLocaleString() : String(v))
 
   return (
     <div className="space-y-4 md:space-y-5">
-      {/* ── 컨트롤 바 (Row 1) ───────────────────────────────────── */}
+      {/* Row 1 */}
       <div className="rounded-lg border border-zinc-200 bg-white p-3 md:p-4">
         <div className="grid gap-2 sm:gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 items-end">
           <div className="flex flex-col gap-1 min-w-0">
@@ -236,7 +251,11 @@ export default function DartAnalysisPage() {
 
           <div className="flex flex-col gap-1 min-w-0">
             <label className="text-[clamp(11px,0.9vw,12px)] text-zinc-600">보고서</label>
-            <select value={reprt} onChange={e => setReprt(e.target.value as any)} className={ctrlCls}>
+            <select
+              value={reprt}
+              onChange={e => setReprt(e.target.value as ReprtCode)}
+              className={ctrlCls}
+            >
               {REPRTS.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
             </select>
           </div>
@@ -246,11 +265,9 @@ export default function DartAnalysisPage() {
             <div className="flex overflow-hidden rounded-md border border-zinc-300">
               <button type="button" onClick={() => setFsDiv('OFS')}
                 className={`flex-1 h-10 text-[clamp(12px,1.05vw,14px)] ${fsDiv==='OFS' ? 'bg-black text-white' : 'bg-white text-zinc-700'}`}
-                style={{ writingMode: 'horizontal-tb' }}
               >단일(OFS)</button>
               <button type="button" onClick={() => setFsDiv('CFS')}
                 className={`flex-1 h-10 text-[clamp(12px,1.05vw,14px)] border-l ${fsDiv==='CFS' ? 'bg-black text-white' : 'bg-white text-zinc-700'}`}
-                style={{ writingMode: 'horizontal-tb' }}
               >연결(CFS)</button>
             </div>
           </div>
@@ -260,11 +277,9 @@ export default function DartAnalysisPage() {
             <div className="flex overflow-hidden rounded-md border border-zinc-300">
               <button type="button" onClick={() => setSjDiv('BS')}
                 className={`flex-1 h-10 text-[clamp(12px,1.05vw,14px)] ${sjDiv==='BS' ? 'bg-black text-white' : 'bg-white text-zinc-700'}`}
-                style={{ writingMode: 'horizontal-tb' }}
               >BS</button>
               <button type="button" onClick={() => setSjDiv('CIS')}
                 className={`flex-1 h-10 text-[clamp(12px,1.05vw,14px)] border-l ${sjDiv==='CIS' ? 'bg-black text-white' : 'bg-white text-zinc-700'}`}
-                style={{ writingMode: 'horizontal-tb' }}
               >PL</button>
             </div>
           </div>
@@ -283,10 +298,10 @@ export default function DartAnalysisPage() {
         </div>
       </div>
 
-      {/* ── 컨트롤 바 (Row 2: 계정 선택) ───────────────────────── */}
+      {/* Row 2 */}
       <div className="rounded-lg border border-zinc-200 bg-white p-3 md:p-4">
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
-          {/* 모드 토글 (원천이 왼쪽/기본) */}
+          {/* 모드 토글 (원천이 기본/좌측) */}
           <div className="w-full lg:w-[320px] flex flex-col gap-1">
             <label className="text-[clamp(11px,0.9vw,12px)] text-zinc-600">계정 선택 모드</label>
             <div className="flex rounded-md border border-zinc-300 overflow-hidden">
@@ -355,7 +370,7 @@ export default function DartAnalysisPage() {
           )}
 
           {/* 버튼 */}
-          <div className="flex gap-2 lg:ml-auto shrink-0" style={{ writingMode: 'horizontal-tb' }}>
+          <div className="flex gap-2 lg:ml-auto shrink-0">
             <button
               type="button"
               onClick={loadCompare}
@@ -376,7 +391,7 @@ export default function DartAnalysisPage() {
         </div>
       </div>
 
-      {/* ── 회사 필터 ───────────────────────────────────────────── */}
+      {/* 회사 필터 */}
       <div className="rounded-lg border border-zinc-200 bg-white p-3 md:p-4">
         <div className="flex items-center justify-between gap-2">
           <h4 className="font-semibold text-[clamp(13px,1.1vw,14px)]">회사 선택</h4>
@@ -408,13 +423,15 @@ export default function DartAnalysisPage() {
         </div>
       </div>
 
-      {/* ── 그래프 ─────────────────────────────────────────────── */}
+      {/* 그래프 */}
       <div className="rounded-lg border border-zinc-200 bg-white p-3 md:p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold text-[clamp(13px,1.1vw,14px)]">
             {year}년 · {REPRTS.find(r => r.code===reprt)?.name} · {fsDiv} · {sjLabel} · 단위 {UNITS.find(u=>u.value===unit)?.label}
           </h3>
-          <div className="text-[clamp(11px,0.95vw,12px)] text-zinc-500">{showCurrentOnly ? '막대: 당기' : '막대: 당기 / 막대2: 전기'}</div>
+          <div className="text-[clamp(11px,0.95vw,12px)] text-zinc-500">
+            {showCurrentOnly ? '막대: 당기' : '막대: 당기 / 막대2: 전기'}
+          </div>
         </div>
 
         {scaledRows.length === 0 ? (
@@ -427,27 +444,20 @@ export default function DartAnalysisPage() {
                   <BarChart data={scaledRows}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="corp_name" tick={{ fontSize: 12 }} interval={0} height={60} />
-                    <YAxis tickFormatter={(v)=>v.toLocaleString()} />
-                    <Tooltip formatter={(v:any)=>v.toLocaleString()} />
+                    <YAxis tickFormatter={(v:number)=>v.toLocaleString()} />
+                    <Tooltip formatter={(v) => tooltipFmt(v)} />
                     <Legend />
                     {/* 당기(검정, 한화는 주황) */}
                     <Bar dataKey="th_scaled" name="당기금액" fill={TH_COLOR_DEFAULT}>
                       {scaledRows.map((r) => (
-                        <Cell
-                          key={`th-${r.corp_code}`}
-                          fill={r.corp_name === HIGHLIGHT_CORP ? HIGHLIGHT_BAR : TH_COLOR_DEFAULT}
-                        />
+                        <Cell key={`th-${r.corp_code}`} fill={r.corp_name === HIGHLIGHT_CORP ? HIGHLIGHT_BAR : TH_COLOR_DEFAULT} />
                       ))}
                     </Bar>
                     {/* 전기(회색, 한화는 연주황) */}
                     {!showCurrentOnly && (
                       <Bar dataKey="fr_scaled" name="전기금액" fill={FR_COLOR_DEFAULT}>
                         {scaledRows.map((r) => (
-                          <Cell
-                            key={`fr-${r.corp_code}`}
-                            fill={r.corp_name === HIGHLIGHT_CORP ? HIGHLIGHT_BAR : FR_COLOR_DEFAULT}
-                            opacity={r.corp_name === HIGHLIGHT_CORP ? 0.7 : 1}
-                          />
+                          <Cell key={`fr-${r.corp_code}`} fill={r.corp_name === HIGHLIGHT_CORP ? HIGHLIGHT_BAR : FR_COLOR_DEFAULT} opacity={r.corp_name === HIGHLIGHT_CORP ? 0.7 : 1} />
                         ))}
                       </Bar>
                     )}
@@ -459,7 +469,7 @@ export default function DartAnalysisPage() {
         )}
       </div>
 
-      {/* ── 원천 테이블 (한화 라인 하이라이트) ─────────────────── */}
+      {/* 표 (한화 라인 하이라이트) */}
       <div className="rounded-lg border border-zinc-200 bg-white overflow-auto">
         <table className="min-w-[900px] w-full text-[clamp(12px,1.05vw,14px)]">
           <thead className="bg-zinc-50">
@@ -480,14 +490,9 @@ export default function DartAnalysisPage() {
               const delta = r.delta_scaled
               const isHanhwa = r.corp_name === HIGHLIGHT_CORP
               return (
-                <tr
-                  key={r.corp_code}
-                  className="border-t"
-                  style={isHanhwa ? { backgroundColor: HIGHLIGHT_ROW } : undefined}
-                >
+                <tr key={r.corp_code} className="border-t" style={isHanhwa ? { backgroundColor: HIGHLIGHT_ROW } : undefined}>
                   <td className="px-3 py-2">{r.corp_name}</td>
                   <td className="px-3 py-2 text-right">{fmt(round2(r.th_scaled))}</td>
-
                   {!showCurrentOnly && (
                     <>
                       <td className="px-3 py-2 text-right">{fmt(round2(r.fr_scaled))}</td>
