@@ -3,7 +3,7 @@
   "crons": [
     { "path": "/api/cron/kosis", "schedule": "0 0 * * *" },
     { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 22 * * *" },
-    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 13 * * *" }
+    { "path": "/api/news/fetch-a93fks1x9p", "schedule": "0 13 * * *" },
     { "path": "/api/dart/sync?years=2023,2024,2025&reprt=11011", "schedule": "30 6 1 4 *" },
     { "path": "/api/dart/sync?years=2025&reprt=11013", "schedule": "0 7 15 5 *" },
     { "path": "/api/dart/sync?years=2025&reprt=11012", "schedule": "0 7 15 8 *" },
