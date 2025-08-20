@@ -4,10 +4,7 @@ import { google, calendar_v3 } from 'googleapis'
 import { getOAuthClient } from '@/lib/google'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
-type ListRange = {
-  timeMin?: string
-  timeMax?: string
-}
+type ListRange = { timeMin?: string; timeMax?: string }
 
 type CreateEventBody = {
   title: string
@@ -19,9 +16,16 @@ type CreateEventBody = {
 }
 
 type GoogleErrData = {
-  // Google API는 error가 string 또는 객체일 수 있음
   error?: { message?: string } | string
   error_description?: string
+}
+
+// YYYY-MM-DD → ±일 이동
+function ymdShift(ymd: string, delta: number) {
+  const [y, m, d] = ymd.split('-').map(n => parseInt(n, 10))
+  const dt = new Date(y, (m || 1) - 1, (d || 1) + delta)
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
 }
 
 async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
@@ -41,7 +45,6 @@ async function getAuthedCalendar(): Promise<calendar_v3.Calendar> {
     token_type: data.token_type || undefined,
     expiry_date: data.expiry_date || undefined,
   })
-
   return google.calendar({ version: 'v3', auth: oauth2Client })
 }
 
@@ -50,13 +53,8 @@ export async function GET(req: Request) {
   try {
     const cal = await getAuthedCalendar()
     const { searchParams } = new URL(req.url)
-    const timeMin =
-      searchParams.get('timeMin') ||
-      new Date(new Date().setDate(1)).toISOString()
-    const timeMax =
-      searchParams.get('timeMax') ||
-      new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
-
+    const timeMin = searchParams.get('timeMin') || new Date(new Date().setDate(1)).toISOString()
+    const timeMax = searchParams.get('timeMax') || new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
 
     const resp = await cal.events.list({
@@ -73,9 +71,7 @@ export async function GET(req: Request) {
   } catch (e: unknown) {
     const data = (e as { response?: { data?: GoogleErrData } })?.response?.data
     const msg =
-      (typeof data?.error === 'string'
-        ? data.error
-        : data?.error?.message) ||
+      (typeof data?.error === 'string' ? data.error : data?.error?.message) ||
       data?.error_description ||
       (e as Error).message ||
       'failed_to_fetch_events'
@@ -92,39 +88,33 @@ export async function POST(req: Request) {
     const body = (await req.json()) as CreateEventBody
 
     const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim() || 'primary'
-
-    const title = body.title || ''
+    const title = body.title?.trim() || ''
     const allDay = !!body.allDay
-    const constStartRaw: string = body.start // reassignment 없음
-    let endRaw: string | undefined = body.end // 필요 시 계산하여 재할당
+    const startRaw: string = body.start
+    let endRaw: string | undefined = body.end
 
-    if (!title || !constStartRaw) throw new Error('title/start is required')
+    if (!title || !startRaw) throw new Error('title/start is required')
 
-    // Google API 입력 포맷 생성
     let startObj: calendar_v3.Schema$EventDateTime
     let endObj: calendar_v3.Schema$EventDateTime
 
-    const isDateOnly =
-      allDay ||
-      (constStartRaw.length === 10 && (!endRaw || endRaw.length === 10))
+    const isDateOnly = allDay || (startRaw.length === 10 && (!endRaw || endRaw.length === 10))
 
     if (isDateOnly) {
-      // 올데이: date 사용, end는 종료일의 다음날(FullCalendar와의 호환을 위해 날짜 그대로 전달해도 대부분 동작)
-      if (!endRaw) {
-        const d = new Date(constStartRaw + 'T00:00:00+09:00')
-        const next = new Date(d.getTime() + 24 * 60 * 60 * 1000)
-        endRaw = next.toISOString().slice(0, 10) // YYYY-MM-DD
-      }
-      startObj = { date: constStartRaw }
-      endObj = { date: endRaw }
+      // ✅ 폼은 '포함형'으로 옴 → Google은 배타형 필요하므로 항상 +1일해서 저장
+      const startYmd = startRaw
+      const endInclusive = endRaw || startYmd
+      const endExclusive = ymdShift(endInclusive, +1)
+
+      startObj = { date: startYmd }
+      endObj = { date: endExclusive }
     } else {
-      // 시간 지정: dateTime 사용
       if (!endRaw) {
-        const s = new Date(constStartRaw)
+        const s = new Date(startRaw)
         const e = new Date(s.getTime() + 60 * 60 * 1000)
         endRaw = e.toISOString()
       }
-      startObj = { dateTime: constStartRaw, timeZone: 'Asia/Seoul' }
+      startObj = { dateTime: startRaw, timeZone: 'Asia/Seoul' }
       endObj = { dateTime: endRaw, timeZone: 'Asia/Seoul' }
     }
 
@@ -143,9 +133,7 @@ export async function POST(req: Request) {
   } catch (e: unknown) {
     const data = (e as { response?: { data?: GoogleErrData } })?.response?.data
     const msg =
-      (typeof data?.error === 'string'
-        ? data.error
-        : data?.error?.message) ||
+      (typeof data?.error === 'string' ? data.error : data?.error?.message) ||
       data?.error_description ||
       (e as Error).message ||
       'failed_to_create_event'

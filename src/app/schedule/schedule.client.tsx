@@ -38,6 +38,8 @@ type ClickInfo = {
     allDay: boolean
     start: Date | null
     end: Date | null
+    startStr?: string
+    endStr?: string
   }
 }
 type ChangeInfo = {
@@ -46,6 +48,8 @@ type ChangeInfo = {
     allDay: boolean
     start: Date | null
     end: Date | null
+    startStr?: string
+    endStr?: string
   }
 }
 type EventClassNamesInfo = { event: { allDay: boolean } }
@@ -67,6 +71,23 @@ function dateOnlyFromISO(iso: string) {
   if (iso.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
   const d = new Date(iso)
   return d.toISOString().slice(0, 10)
+}
+
+function shiftDateOnly(ymd: string, delta: number) {
+  if (!ymd) return ''
+  const [y, m, d] = ymd.split('-').map((n) => parseInt(n, 10))
+  const dt = new Date(y, (m || 1) - 1, (d || 1) + delta)
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+}
+
+// ✅ 종일 ↔ 시간 전환에 사용
+function pad2(n: number) { return n < 10 ? '0' + n : '' + n }
+function isDateOnlyStr(s: string) { return /^\d{4}-\d{2}-\d{2}$/.test(s) }
+function datePart(s: string) { return s ? s.slice(0, 10) : '' }
+function ymdToLocalDT(ymd: string, hour = 9, minute = 0) {
+  if (!ymd) return ''
+  return `${ymd}T${pad2(hour)}:${pad2(minute)}`
 }
 
 export default function ScheduleClient() {
@@ -162,12 +183,15 @@ export default function ScheduleClient() {
   const handleSelect = (info: SelectInfo) => {
     const isAllDay = !!info.allDay
     if (isAllDay) {
+      const start = info.startStr.slice(0, 10)
+      const endRaw = info.endStr ? info.endStr.slice(0, 10) : start // exclusive
+      const endInclusive = shiftDateOnly(endRaw, -1)                 // inclusive로 보정
       setForm({
         id: undefined,
         title: '',
         allDay: true,
-        startInput: info.startStr.slice(0, 10),
-        endInput: info.endStr.slice(0, 10),
+        startInput: start,
+        endInput: endInclusive,
       })
     } else {
       const s = new Date(info.startStr)
@@ -187,15 +211,14 @@ export default function ScheduleClient() {
   const handleEventDropOrResize = async (changeInfo: ChangeInfo) => {
     const { event } = changeInfo
     const eid = encodeURIComponent(event.id)
-    const payload: {
-      allDay: boolean
-      start?: string
-      end?: string
-    } = { allDay: !!event.allDay }
+    const payload: any = { allDay: !!event.allDay }
 
     if (event.allDay) {
-      if (event.start) payload.start = dateOnlyFromISO(event.start.toISOString())
-      if (event.end) payload.end = dateOnlyFromISO(event.end.toISOString())
+      const start = event.startStr ? event.startStr.slice(0, 10) : undefined
+      const endRaw = event.endStr ? event.endStr.slice(0, 10) : start // exclusive
+      const endInclusive = endRaw ? shiftDateOnly(endRaw, -1) : undefined
+      if (start) payload.start = start
+      if (endInclusive) payload.end = endInclusive
     } else {
       if (event.start) payload.start = event.start.toISOString()
       if (event.end) payload.end = event.end.toISOString()
@@ -206,7 +229,7 @@ export default function ScheduleClient() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    const j: { error?: string } = await res.json().catch(() => ({} as { error?: string }))
+    const j = await res.json().catch(() => ({}))
     if (!res.ok) alert('수정 실패: ' + (j?.error || res.statusText))
     load()
   }
@@ -216,12 +239,15 @@ export default function ScheduleClient() {
     const e = clickInfo.event
     const isAllDay = !!e.allDay
     if (isAllDay) {
+      const start = e.startStr ? e.startStr.slice(0, 10) : (e.start ? dateOnlyFromISO(e.start.toISOString()) : '')
+      const endRaw = e.endStr ? e.endStr.slice(0, 10) : (e.end ? dateOnlyFromISO(e.end.toISOString()) : start) // exclusive
+      const endInclusive = endRaw ? shiftDateOnly(endRaw, -1) : ''
       setForm({
         id: e.id,
         title: e.title || '',
         allDay: true,
-        startInput: e.start ? dateOnlyFromISO(e.start.toISOString()) : '',
-        endInput: e.end ? dateOnlyFromISO(e.end.toISOString()) : (e.start ? dateOnlyFromISO(e.start.toISOString()) : ''),
+        startInput: start,
+        endInput: endInclusive,
       })
     } else {
       setForm({
@@ -475,23 +501,54 @@ export default function ScheduleClient() {
                 </button>
               </div>
 
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">제목</span>
-                <input
-                  type="text"
-                  value={form.title}
-                  onChange={(e) => onChangeField({ title: e.target.value })}
-                  className="w-full border rounded px-3 py-2 text-sm"
-                  placeholder="제목을 입력하세요"
-                  required
-                />
-              </label>
+                <label className="block">
+                  <span className="block text-sm font-medium mb-1">제목</span>
+                  <input
+                    type="text"
+                    value={form.title}
+                    onChange={(e) => onChangeField({ title: e.target.value })}
+                    className="w-full border rounded px-3 py-2 text-sm"
+                    placeholder="제목을 입력하세요"
+                    required
+                  />
+                </label>
 
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   checked={form.allDay}
-                  onChange={(e) => onChangeField({ allDay: e.target.checked })}
+                  onChange={(e) => {
+                    const nextAllDay = e.target.checked
+                    if (!nextAllDay) {
+                      // ✅ 종일 → 시간 이벤트로 전환 (선택해 둔 날짜를 그대로 사용)
+                      const startYmd =
+                        isDateOnlyStr(form.startInput) ? form.startInput : datePart(form.startInput)
+                      const endYmd =
+                        isDateOnlyStr(form.endInput)
+                          ? form.endInput
+                          : (form.endInput ? datePart(form.endInput) : startYmd)
+
+                      const startDT = ymdToLocalDT(startYmd, 9, 0)   // 기본 09:00
+                      const endDT = ymdToLocalDT(endYmd || startYmd, 10, 0) // 기본 10:00
+
+                      setForm(prev => ({
+                        ...prev,
+                        allDay: false,
+                        startInput: startDT,
+                        endInput: endDT,
+                      }))
+                    } else {
+                      // 시간 → 종일
+                      const startYmd = datePart(form.startInput)
+                      const endYmd = form.endInput ? datePart(form.endInput) : startYmd
+                      setForm(prev => ({
+                        ...prev,
+                        allDay: true,
+                        startInput: startYmd,
+                        endInput: endYmd,
+                      }))
+                    }
+                  }}
                 />
                 <span className="text-sm">종일</span>
               </label>
@@ -521,7 +578,7 @@ export default function ScheduleClient() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="block">
-                    <span className="block text sm font-medium mb-1">시작(시간)</span>
+                    <span className="block text-sm font-medium mb-1">시작(시간)</span>
                     <input
                       type="datetime-local"
                       value={form.startInput}
@@ -531,7 +588,7 @@ export default function ScheduleClient() {
                     />
                   </label>
                   <label className="block">
-                    <span className="block text sm font-medium mb-1">종료(시간)</span>
+                    <span className="block text-sm font-medium mb-1">종료(시간)</span>
                     <input
                       type="datetime-local"
                       value={form.endInput}
