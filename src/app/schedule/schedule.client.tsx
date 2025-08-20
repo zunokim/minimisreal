@@ -208,10 +208,12 @@ export default function ScheduleClient() {
   }
 
   // 드래그/리사이즈 → 서버로 즉시 반영
+  type PatchPayload = { allDay: boolean; start?: string; end?: string }
+
   const handleEventDropOrResize = async (changeInfo: ChangeInfo) => {
     const { event } = changeInfo
     const eid = encodeURIComponent(event.id)
-    const payload: any = { allDay: !!event.allDay }
+    const payload: PatchPayload = { allDay: !!event.allDay }
 
     if (event.allDay) {
       const start = event.startStr ? event.startStr.slice(0, 10) : undefined
@@ -370,35 +372,26 @@ export default function ScheduleClient() {
     <div className="p-4">
       {/* 전역 스타일: 색상 분기 + 반응형 + 레이어링 */}
       <style jsx global>{`
-        /* FullCalendar 기본 글자 크기 소폭 축소 */
         .fc { --fc-small-font-size: 0.85rem; }
-
-        /* 이벤트 한 줄 말줄임 */
         .fc .fc-event-title,
         .fc .fc-event-time { 
           overflow: hidden; 
           white-space: nowrap; 
           text-overflow: ellipsis; 
         }
-
-        /* ✅ 시간 텍스트는 전부 숨김 (요청사항) */
         .fc .fc-event-time { display: none !important; }
 
-        /* ✅ 색상 분기 */
-        /* 종일(기본 주황) */
         .fc .fc-event.fc-all-day {
-          background-color: #fb923c !important; /* orange-400 */
+          background-color: #fb923c !important;
           border-color: #fb923c !important;
           color: #ffffff !important;
         }
-        /* 시간 지정(더 연한 주황) */
         .fc .fc-event.fc-timed {
-          background-color: #fed7aa !important; /* orange-200 */
+          background-color: #fed7aa !important;
           border-color: #fed7aa !important;
-          color: #1f2937 !important;            /* slate-800 글자 */
+          color: #1f2937 !important;
         }
 
-        /* 모바일(≤640px) */
         @media (max-width: 640px) {
           .fc .fc-toolbar-title { font-size: 1rem; }
           .fc .fc-button { padding: 0.25rem 0.4rem; font-size: 0.75rem; }
@@ -406,8 +399,6 @@ export default function ScheduleClient() {
           .fc .fc-daygrid-day-number { font-size: 0.75rem; }
           .fc .fc-event { font-size: 0.75rem; }
         }
-
-        /* 더 작은 모바일(≤480px) */
         @media (max-width: 480px) {
           .fc .fc-toolbar-title { font-size: 0.95rem; }
           .fc .fc-button { padding: 0.2rem 0.35rem; font-size: 0.7rem; }
@@ -415,8 +406,6 @@ export default function ScheduleClient() {
           .fc .fc-daygrid-day-number { font-size: 0.7rem; }
           .fc .fc-event { font-size: 0.7rem; }
         }
-
-        /* 아주 작은 모바일(≤360px) */
         @media (max-width: 360px) {
           .fc .fc-toolbar-title { font-size: 0.9rem; }
           .fc .fc-button { padding: 0.18rem 0.3rem; font-size: 0.65rem; }
@@ -460,12 +449,10 @@ export default function ScheduleClient() {
           eventResize={handleEventDropOrResize}
           eventClick={handleEventClick}
           events={events}
-          /* 전체 기본색은 쓰지 않고, 이벤트별 클래스에서 색상을 분기 */
           eventClassNames={eventClassNames}
           eventDidMount={(info: EventDidMountInfo) => {
             if (info.el) info.el.style.cursor = 'pointer'
           }}
-          /* 시간 텍스트를 표시하지 않고, 제목만 렌더 */
           eventContent={(arg: EventContentInfo) => {
             const title = arg.event.title || ''
             return { html: `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${title}</div>` }
@@ -476,12 +463,10 @@ export default function ScheduleClient() {
       {/* ---- Modal ---- */}
       {modalOpen && (
         <>
-          {/* overlay */}
           <div
             className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[1000]"
             onClick={() => setModalOpen(false)}
           />
-          {/* dialog */}
           <div className="fixed inset-0 flex items-center justify-center p-4 z-[1010]">
             <form
               onSubmit={onSubmitForm}
@@ -501,17 +486,17 @@ export default function ScheduleClient() {
                 </button>
               </div>
 
-                <label className="block">
-                  <span className="block text-sm font-medium mb-1">제목</span>
-                  <input
-                    type="text"
-                    value={form.title}
-                    onChange={(e) => onChangeField({ title: e.target.value })}
-                    className="w-full border rounded px-3 py-2 text-sm"
-                    placeholder="제목을 입력하세요"
-                    required
-                  />
-                </label>
+              <label className="block">
+                <span className="block text-sm font-medium mb-1">제목</span>
+                <input
+                  type="text"
+                  value={form.title}
+                  onChange={(e) => onChangeField({ title: e.target.value })}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="제목을 입력하세요"
+                  required
+                />
+              </label>
 
               <label className="flex items-center gap-2">
                 <input
@@ -520,7 +505,7 @@ export default function ScheduleClient() {
                   onChange={(e) => {
                     const nextAllDay = e.target.checked
                     if (!nextAllDay) {
-                      // ✅ 종일 → 시간 이벤트로 전환 (선택해 둔 날짜를 그대로 사용)
+                      // 종일 → 시간
                       const startYmd =
                         isDateOnlyStr(form.startInput) ? form.startInput : datePart(form.startInput)
                       const endYmd =
@@ -528,8 +513,8 @@ export default function ScheduleClient() {
                           ? form.endInput
                           : (form.endInput ? datePart(form.endInput) : startYmd)
 
-                      const startDT = ymdToLocalDT(startYmd, 9, 0)   // 기본 09:00
-                      const endDT = ymdToLocalDT(endYmd || startYmd, 10, 0) // 기본 10:00
+                      const startDT = ymdToLocalDT(startYmd, 9, 0)
+                      const endDT = ymdToLocalDT(endYmd || startYmd, 10, 0)
 
                       setForm(prev => ({
                         ...prev,
@@ -588,7 +573,7 @@ export default function ScheduleClient() {
                     />
                   </label>
                   <label className="block">
-                    <span className="block text-sm font-medium mb-1">종료(시간)</span>
+                    <span className="block text sm font-medium mb-1">종료(시간)</span>
                     <input
                       type="datetime-local"
                       value={form.endInput}
