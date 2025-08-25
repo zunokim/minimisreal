@@ -2,13 +2,36 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
+type Row = {
+  content_id: string
+  subject: string | null
+  publish_org: string | null
+  origin_url: string | null
+  view_cnt: number | null
+  reg_date: string | null
+  atchfile_url: string | null
+  atchfile_nm: string | null
+  contents_kor: string | null
+}
+
+type ApiResultItem = {
+  contentId: string
+  subject: string | null
+  publishOrg: string | null
+  originUrl: string | null
+  viewCnt: number | null
+  regDate: string | null
+  atchfileUrl: string | null
+  atchfileNm: string | null
+  contentsKor: string | null
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const startDate = searchParams.get('startDate') // YYYY-MM-DD
     const endDate = searchParams.get('endDate')     // YYYY-MM-DD
     const subject = searchParams.get('subject') || ''
-    const publishOrg = searchParams.get('publishOrg') || ''
 
     if (!startDate || !endDate) {
       return NextResponse.json(
@@ -17,7 +40,6 @@ export async function GET(request: Request) {
       )
     }
 
-    // 기간 필터: reg_date 기준
     let query = supabaseAdmin
       .from('fss_press')
       .select(
@@ -28,35 +50,31 @@ export async function GET(request: Request) {
       .order('reg_date', { ascending: false })
 
     if (subject) {
-      // 간단 부분일치 (ILIKE)
       query = query.ilike('subject', `%${subject}%`)
     }
-    if (publishOrg) {
-      query = query.ilike('publish_org', `%${publishOrg}%`)
-    }
 
-    const { data, error } = await query
+    const { data, error } = await query.returns<Row[]>()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+    const result: ApiResultItem[] = (data ?? []).map((r) => ({
+      contentId: r.content_id,
+      subject: r.subject,
+      publishOrg: r.publish_org,
+      originUrl: r.origin_url,
+      viewCnt: r.view_cnt,
+      regDate: r.reg_date,
+      atchfileUrl: r.atchfile_url,
+      atchfileNm: r.atchfile_nm,
+      contentsKor: r.contents_kor,
+    }))
+
     return NextResponse.json({
-      resultCnt: data?.length ?? 0,
-      result: (data ?? []).map((r) => ({
-        contentId: r.content_id,
-        subject: r.subject,
-        publishOrg: r.publish_org,
-        originUrl: r.origin_url,
-        viewCnt: r.view_cnt,
-        regDate: r.reg_date,
-        atchfileUrl: r.atchfile_url,
-        atchfileNm: r.atchfile_nm,
-        contentsKor: r.contents_kor,
-      })),
+      resultCnt: result.length,
+      result,
       period: { startDate, endDate },
     })
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message ?? 'Unexpected server error' },
-      { status: 500 }
-    )
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unexpected server error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

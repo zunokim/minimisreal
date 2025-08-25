@@ -25,14 +25,11 @@ type ApiResponse = {
   saved?: number
 }
 
-/** 클라이언트에서도 과거 저장분(엔티티가 남아있는 레코드)을 안전하게 표시 */
 function decodeHtmlEntities(input?: string | null): string {
   if (!input) return ''
   let s = String(input)
-
   s = s.replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
   s = s.replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
-
   const map: Record<string, string> = {
     '&amp;': '&',
     '&lt;': '<',
@@ -60,7 +57,6 @@ function formatDateInput(d: Date) {
 }
 
 export default function FssPressPage() {
-  // 기본 기간: 최근 30일
   const today = useMemo(() => new Date(), [])
   const defEnd = useMemo(() => formatDateInput(today), [today])
   const defStart = useMemo(() => {
@@ -71,7 +67,7 @@ export default function FssPressPage() {
 
   const [startDate, setStartDate] = useState(defStart)
   const [endDate, setEndDate] = useState(defEnd)
-  const [subject, setSubject] = useState('') // 발행기관 필터 제거
+  const [subject, setSubject] = useState('')
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -80,7 +76,6 @@ export default function FssPressPage() {
 
   const disabled = useMemo(() => !startDate || !endDate, [startDate, endDate])
 
-  // 1) API → DB 수집(동기화)
   const onSync = useCallback(async () => {
     try {
       setLoading(true)
@@ -93,22 +88,22 @@ export default function FssPressPage() {
       if (subject.trim()) qs.set('subject', subject.trim())
       qs.set('save', '1')
 
-      const res = await fetch(`/api/fss/press?${qs.toString()}`, {
-        method: 'GET',
-        cache: 'no-store',
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'API sync error')
-
-      setSyncInfo(`동기화 완료: ${json.saved ?? 0}건 저장`)
-    } catch (e: any) {
-      setError(e?.message ?? '동기화 중 오류가 발생했습니다.')
+      const res = await fetch(`/api/fss/press?${qs.toString()}`, { method: 'GET', cache: 'no-store' })
+      const json: unknown = await res.json()
+      if (!res.ok) {
+        const errMsg = (json as { error?: string }).error ?? 'API sync error'
+        throw new Error(errMsg)
+      }
+      const saved = (json as { saved?: number }).saved ?? 0
+      setSyncInfo(`동기화 완료: ${saved}건 저장`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '동기화 중 오류가 발생했습니다.'
+      setError(msg)
     } finally {
       setLoading(false)
     }
   }, [startDate, endDate, subject])
 
-  // 2) DB에서 조회
   const onSearchDb = useCallback(async () => {
     try {
       setLoading(true)
@@ -120,16 +115,16 @@ export default function FssPressPage() {
       qs.set('endDate', endDate)
       if (subject.trim()) qs.set('subject', subject.trim())
 
-      const res = await fetch(`/api/fss/press/db?${qs.toString()}`, {
-        method: 'GET',
-        cache: 'no-store',
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error || 'DB query error')
-
+      const res = await fetch(`/api/fss/press/db?${qs.toString()}`, { method: 'GET', cache: 'no-store' })
+      const json: unknown = await res.json()
+      if (!res.ok) {
+        const errMsg = (json as { error?: string }).error ?? 'DB query error'
+        throw new Error(errMsg)
+      }
       setData(json as ApiResponse)
-    } catch (e: any) {
-      setError(e?.message ?? '조회 중 오류가 발생했습니다.')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '조회 중 오류가 발생했습니다.'
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -146,22 +141,17 @@ export default function FssPressPage() {
 
   return (
     <main className="p-6 max-w-5xl mx-auto">
-      {/* 상단 헤더 + 뒤로가기 */}
       <header className="mb-5 flex items-start justify-between gap-4">
         <div>
           <div className="text-sm text-gray-500">금융감독원</div>
           <h1 className="text-2xl font-bold">보도자료(실적보고용)</h1>
           <p className="text-sm text-gray-600 mt-1">실적보고 사용을 위한 보도자료 크롤링</p>
         </div>
-        <Link
-          href="/data"
-          className="shrink-0 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-        >
+        <Link href="/data" className="shrink-0 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
           ← 뒤로가기
         </Link>
       </header>
 
-      {/* 검색/수집 섹션 */}
       <section className="rounded-2xl border bg-white p-5 shadow-sm mb-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col">
@@ -224,32 +214,26 @@ export default function FssPressPage() {
           )}
         </div>
 
-        {/* 안내 문구 */}
         <p className="mt-3 text-xs text-gray-500">
-          * API 데이터 수집 후 조회는 DB 조회로 조회(API 횟수 제한 有)
+          * API &gt; DB 동기화 후 조회는 DB 조회로 조회(API 횟수 제한 有)
         </p>
 
         {syncInfo && <div className="mt-2 text-sm text-emerald-700">{syncInfo}</div>}
       </section>
 
-      {/* 오류 */}
       {error && <div className="mb-4 text-sm text-red-600">오류: {error}</div>}
 
-      {/* 결과 리스트 */}
       <section className="space-y-3">
         {data?.result?.map((item) => {
           const title = decodeHtmlEntities(item.subject)
           const body = decodeHtmlEntities(item.contentsKor)
+          const dateText = item.regDate ? new Date(item.regDate).toLocaleString() : ''
           return (
             <article key={item.contentId} className="border rounded-xl p-4 bg-white">
               <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mb-1">
                 <span>{item.publishOrg || '발행기관 미기재'}</span>
                 <span>·</span>
-                <time>
-                  {item.regDate
-                    ? new Date(item.regDate).toLocaleString()
-                    : ''}
-                </time>
+                <time>{dateText}</time>
                 <span>·</span>
                 <span>조회수 {item.viewCnt}</span>
               </div>
@@ -261,11 +245,8 @@ export default function FssPressPage() {
               >
                 {title || '(제목 없음)'}
               </a>
-              {body && (
-                <p className="mt-2 text-sm whitespace-pre-line line-clamp-3">
-                  {body}
-                </p>
-              )}
+              {body && <p className="mt-2 text-sm whitespace-pre-line line-clamp-3">{body}</p>}
+
               {(item.atchfileUrl || item.atchfileNm) && (
                 <div className="mt-2 text-sm">
                   <div className="font-medium mb-1">첨부</div>

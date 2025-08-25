@@ -19,15 +19,8 @@ type DataRow = {
   value: number | null
 }
 
-type RegionRow = {
-  region_code: string
-  region_name: string | null
-}
-
-type ItmRow = {
-  itm_id: string
-  itm_name: string | null
-}
+type RegionRow = { region_code: string; region_name: string | null }
+type ItmRow = { itm_id: string; itm_name: string | null }
 
 function ymNow(): string {
   const d = new Date()
@@ -52,10 +45,9 @@ function formatNumber(n: number | null, unit?: string | null): string {
 export default function DataClient() {
   const [open, setOpen] = useState<DatasetKey | null>(null)
 
-  // ===== 모달 내 상태 (KOSIS 등 기존 카드용) =====
-  const [start, setStart] = useState<string>(ymAdd(ymNow(), -11)) // 최근 12개월
+  // ===== 모달 내 상태 =====
+  const [start, setStart] = useState<string>(ymAdd(ymNow(), -11))
   const [end, setEnd] = useState<string>(ymNow())
-
   const [region, setRegion] = useState<string>('ALL')
   const [itm, setItm] = useState<string>('ALL')
 
@@ -66,13 +58,12 @@ export default function DataClient() {
   const [rows, setRows] = useState<DataRow[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // 모달 열릴 때 기본값/옵션 로드 (기존 KOSIS 등)
+  // 모달 열릴 때 기본값/옵션 로드
   useEffect(() => {
     const loadOptions = async () => {
       if (!open) return
       const table = pickTable(open)
 
-      // region 옵션(코드/이름)
       const { data: regionData } = await supabase
         .from(table)
         .select('region_code, region_name', { head: false })
@@ -81,9 +72,8 @@ export default function DataClient() {
         .returns<RegionRow[]>()
 
       const regionMap = new Map<string, string | null>()
-      for (const r of regionData ?? []) {
-        regionMap.set(r.region_code, r.region_name)
-      }
+      for (const r of regionData ?? []) regionMap.set(r.region_code, r.region_name)
+
       const regionOpts: Option[] = [{ value: 'ALL', label: '전체' }]
       for (const [code, name] of regionMap.entries()) {
         regionOpts.push({ value: code, label: name ?? code })
@@ -91,7 +81,6 @@ export default function DataClient() {
       regionOpts.sort((a, b) => a.label.localeCompare(b.label, 'ko'))
       setRegionOptions(regionOpts)
 
-      // itm 옵션
       const { data: itmData } = await supabase
         .from(table)
         .select('itm_id, itm_name', { head: false })
@@ -100,9 +89,8 @@ export default function DataClient() {
         .returns<ItmRow[]>()
 
       const itmMap = new Map<string, string | null>()
-      for (const r of itmData ?? []) {
-        itmMap.set(r.itm_id, r.itm_name)
-      }
+      for (const r of itmData ?? []) itmMap.set(r.itm_id, r.itm_name)
+
       const itmOpts: Option[] = [{ value: 'ALL', label: '전체' }]
       for (const [code, name] of itmMap.entries()) {
         itmOpts.push({ value: code, label: name ?? code })
@@ -110,14 +98,13 @@ export default function DataClient() {
       itmOpts.sort((a, b) => a.label.localeCompare(b.label, 'ko'))
       setItmOptions(itmOpts)
 
-      // 기본값 리셋
       setRegion('ALL')
       setItm('ALL')
       setRows([])
       setError(null)
     }
     void loadOptions()
-  }, [open, supabase])
+  }, [open]) // <-- supabase 제거
 
   const title = useMemo(() => (open ? DATASETS[open].title : ''), [open])
   const tableName = useMemo(() => (open ? pickTable(open) : ''), [open])
@@ -143,11 +130,8 @@ export default function DataClient() {
     query = query.order('prd_de', { ascending: false }).order('region_code', { ascending: true })
 
     const { data, error: err } = await query.returns<DataRow[]>()
-    if (err) {
-      setError(err.message)
-    } else {
-      setRows(data ?? [])
-    }
+    if (err) setError(err.message)
+    else setRows(data ?? [])
     setLoading(false)
   }
 
@@ -165,7 +149,6 @@ export default function DataClient() {
     <div className="max-w-7xl mx-auto space-y-8">
       <h2 className="text-2xl font-bold">API Data</h2>
 
-      {/* 카드 섹션: 기존 DATASETS 카드들 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {(Object.keys(DATASETS) as DatasetKey[]).map((key) => (
           <button
@@ -183,7 +166,7 @@ export default function DataClient() {
           </button>
         ))}
 
-        {/* 신규 카드: 금융감독원 보도자료(실적보고용) — KOSIS 카드와 동일 스타일 */}
+        {/* 보도자료 카드 (검색 페이지로 이동) */}
         <Link
           href="/data/fss-press"
           className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
@@ -198,130 +181,70 @@ export default function DataClient() {
         </Link>
       </div>
 
-      {/* ====== (기존) 모달: KOSIS 등 기존 카드 클릭 시 ====== */}
+      {/* 이하: 기존 KOSIS 모달 */}
       {open && (
         <>
-          {/* 배경 오버레이 */}
-          <button
-            className="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-40"
-            aria-label="닫기"
-            onClick={() => setOpen(null)}
-          />
-          {/* 모달 본문 */}
+          <button className="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-40" aria-label="닫기" onClick={() => setOpen(null)} />
           <div className="fixed inset-x-0 top-16 mx-auto max-w-6xl z-50">
             <div className="rounded-2xl border bg-white shadow-xl p-4 md:p-6">
-              {/* 헤더 */}
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-xs text-gray-500">{open ? DATASETS[open].source : ''}</div>
                   <h3 className="text-xl font-bold">{title}</h3>
                 </div>
-                <button
-                  onClick={() => setOpen(null)}
-                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-                >
-                  닫기
-                </button>
+                <button onClick={() => setOpen(null)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">닫기</button>
               </div>
 
-              {/* 필터 */}
               <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
-                  <input
-                    value={start}
-                    onChange={(e) => setStart(e.target.value)}
-                    placeholder="예: 202301"
-                    className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200"
-                  />
+                  <input value={start} onChange={(e) => setStart(e.target.value)} placeholder="예: 202301"
+                         className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200" />
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
-                  <input
-                    value={end}
-                    onChange={(e) => setEnd(e.target.value)}
-                    placeholder="예: 202512"
-                    className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200"
-                  />
+                  <input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="예: 202512"
+                         className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200" />
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">지역</div>
-                  <select
-                    value={region}
-                    onChange={(e) => setRegion(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 bg-white"
-                  >
-                    {regionOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
+                  <select value={region} onChange={(e) => setRegion(e.target.value)} className="w-full rounded-md border px-3 py-2 bg-white">
+                    {regionOptions.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">항목</div>
-                  <select
-                    value={itm}
-                    onChange={(e) => setItm(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 bg-white"
-                  >
-                    {itmOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
+                  <select value={itm} onChange={(e) => setItm(e.target.value)} className="w-full rounded-md border px-3 py-2 bg-white">
+                    {itmOptions.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                   </select>
                 </label>
               </div>
 
-              {/* 액션 버튼 */}
               <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={fetchRows}
-                  disabled={loading}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]"
-                >
+                <button onClick={fetchRows} disabled={loading} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]">
                   {loading ? '조회 중…' : '조회'}
                 </button>
-                <button
-                  onClick={downloadCsv}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]"
-                >
+                <button onClick={downloadCsv} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]">
                   CSV 다운로드
                 </button>
               </div>
 
-              {/* 데이터 테이블 */}
               <div className="mt-4 border rounded-xl overflow-hidden">
                 <div className="max-h-[50vh] overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
-                        <th>시점(PRD_DE)</th>
-                        <th>지역</th>
-                        <th>항목</th>
-                        <th className="text-right">값</th>
+                        <th>시점(PRD_DE)</th><th>지역</th><th>항목</th><th className="text-right">값</th>
                       </tr>
                     </thead>
                     <tbody>
                       {error ? (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-red-600">
-                            {error}
-                          </td>
-                        </tr>
+                        <tr><td colSpan={4} className="px-3 py-6 text-red-600">{error}</td></tr>
                       ) : rows.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-gray-500">
-                            조회 결과가 없습니다. 위의 필터를 설정한 뒤 &quot;조회&quot;를 눌러주세요.
-                          </td>
-                        </tr>
+                        <tr><td colSpan={4} className="px-3 py-6 text-gray-500">조회 결과가 없습니다. 위의 필터를 설정한 뒤 &quot;조회&quot;를 눌러주세요.</td></tr>
                       ) : (
                         rows.map((r, i) => (
-                          <tr
-                            key={`${r.prd_de}-${r.region_code}-${r.itm_id}-${i}`}
-                            className="odd:bg-white even:bg-gray-50"
-                          >
+                          <tr key={`${r.prd_de}-${r.region_code}-${r.itm_id}-${i}`} className="odd:bg-white even:bg-gray-50">
                             <td className="px-3 py-2">{r.prd_de}</td>
                             <td className="px-3 py-2">{r.region_name ?? r.region_code}</td>
                             <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
