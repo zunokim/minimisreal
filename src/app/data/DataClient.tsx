@@ -1,6 +1,7 @@
 // src/app/data/DataClient.tsx
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { DATASETS, type DatasetKey, pickTable } from '@/lib/datasets'
@@ -51,7 +52,7 @@ function formatNumber(n: number | null, unit?: string | null): string {
 export default function DataClient() {
   const [open, setOpen] = useState<DatasetKey | null>(null)
 
-  // ===== 모달 내 상태 =====
+  // ===== 모달 내 상태 (KOSIS 등 기존 카드용) =====
   const [start, setStart] = useState<string>(ymAdd(ymNow(), -11)) // 최근 12개월
   const [end, setEnd] = useState<string>(ymNow())
 
@@ -65,7 +66,7 @@ export default function DataClient() {
   const [rows, setRows] = useState<DataRow[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // 모달 열릴 때 기본값/옵션 로드
+  // 모달 열릴 때 기본값/옵션 로드 (기존 KOSIS 등)
   useEffect(() => {
     const loadOptions = async () => {
       if (!open) return
@@ -116,7 +117,7 @@ export default function DataClient() {
       setError(null)
     }
     void loadOptions()
-  }, [open])
+  }, [open, supabase])
 
   const title = useMemo(() => (open ? DATASETS[open].title : ''), [open])
   const tableName = useMemo(() => (open ? pickTable(open) : ''), [open])
@@ -164,7 +165,7 @@ export default function DataClient() {
     <div className="max-w-7xl mx-auto space-y-8">
       <h2 className="text-2xl font-bold">API Data</h2>
 
-      {/* 카드 섹션 */}
+      {/* 카드 섹션: 기존 DATASETS 카드들 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {(Object.keys(DATASETS) as DatasetKey[]).map((key) => (
           <button
@@ -181,9 +182,23 @@ export default function DataClient() {
             </div>
           </button>
         ))}
+
+        {/* 신규 카드: 금융감독원 보도자료(실적보고용) — KOSIS 카드와 동일 스타일 */}
+        <Link
+          href="/data/fss-press"
+          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+        >
+          <div className="text-sm text-gray-500">금융감독원</div>
+          <div className="text-lg font-semibold mt-1">보도자료(실적보고용)</div>
+          <div className="text-sm text-gray-600 mt-1">실적보고 사용을 위한 보도자료 크롤링</div>
+          <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+            자세히 보기
+            <span aria-hidden>→</span>
+          </div>
+        </Link>
       </div>
 
-      {/* 모달 */}
+      {/* ====== (기존) 모달: KOSIS 등 기존 카드 클릭 시 ====== */}
       {open && (
         <>
           {/* 배경 오버레이 */}
