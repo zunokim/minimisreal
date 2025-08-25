@@ -215,7 +215,7 @@ export default function FssPressPage() {
         </div>
 
         <p className="mt-3 text-xs text-gray-500">
-          * API &gt; DB 동기화 후 조회는 DB 조회로 조회(API 횟수 제한 有)
+          * API 수집 후 조회는 DB 조회로 조회(API 횟수 제한 有)
         </p>
 
         {syncInfo && <div className="mt-2 text-sm text-emerald-700">{syncInfo}</div>}
