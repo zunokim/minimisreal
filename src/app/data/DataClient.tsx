@@ -1,4 +1,3 @@
-// src/app/data/DataClient.tsx
 'use client'
 
 import Link from 'next/link'
@@ -32,14 +31,9 @@ function ymAdd(ym: string, diff: number): string {
   const d = new Date(y, m - 1 + diff, 1)
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
 }
-function formatNumber(n: number | null, unit?: string | null): string {
+function formatNumber(n: number | null, _unit?: string | null): string {
   if (n === null || n === undefined) return '-'
-  try {
-    const s = n.toLocaleString()
-    return unit ? `${s} ${unit}` : s
-  } catch {
-    return String(n)
-  }
+  try { return n.toLocaleString() } catch { return String(n) }
 }
 
 export default function DataClient() {
@@ -104,7 +98,7 @@ export default function DataClient() {
       setError(null)
     }
     void loadOptions()
-  }, [open]) // <-- supabase 제거
+  }, [open])
 
   const title = useMemo(() => (open ? DATASETS[open].title : ''), [open])
   const tableName = useMemo(() => (open ? pickTable(open) : ''), [open])
@@ -117,10 +111,7 @@ export default function DataClient() {
 
     let query = supabase
       .from(tableName)
-      .select(
-        'prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value',
-        { head: false }
-      )
+      .select('prd_de, prd_se, region_code, region_name, itm_id, itm_name, unit, value', { head: false })
       .gte('prd_de', start)
       .lte('prd_de', end)
 
@@ -175,10 +166,36 @@ export default function DataClient() {
           <div className="text-lg font-semibold mt-1">보도자료(실적보고용)</div>
           <div className="text-sm text-gray-600 mt-1">실적보고 사용을 위한 보도자료 크롤링</div>
           <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
-            자세히 보기
-            <span aria-hidden>→</span>
+            자세히 보기<span aria-hidden>→</span>
           </div>
         </Link>
+
+        {/* --- R-ONE: 오피스 임대가격지수 --- */}
+        <Link
+          href="/data/rone-office"
+          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+        >
+          <div className="text-sm text-gray-500">R-ONE</div>
+          <div className="text-lg font-semibold mt-1">임대동향 지역별 임대가격지수(오피스)</div>
+          <div className="text-sm text-gray-600 mt-1">CBD / KBD / YBD · 분기</div>
+          <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+            자세히 보기<span aria-hidden>→</span>
+          </div>
+        </Link>
+
+        {/* --- R-ONE: 오피스 공실률 --- */}
+        <Link
+          href="/data/rone-vacancy"
+          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+        >
+          <div className="text-sm text-gray-500">R-ONE</div>
+          <div className="text-lg font-semibold mt-1">임대 지역별 공실률(오피스)</div>
+          <div className="text-sm text-gray-600 mt-1">CBD / KBD / YBD · 분기</div>
+          <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+            자세히 보기<span aria-hidden>→</span>
+          </div>
+        </Link>
+
       </div>
 
       {/* 이하: 기존 KOSIS 모달 */}
@@ -248,7 +265,7 @@ export default function DataClient() {
                             <td className="px-3 py-2">{r.prd_de}</td>
                             <td className="px-3 py-2">{r.region_name ?? r.region_code}</td>
                             <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
-                            <td className="px-3 py-2 text-right">{formatNumber(r.value, r.unit)}</td>
+                            <td className="px-3 py-2 text-right">{formatNumber(r.value)}</td>
                           </tr>
                         ))
                       )}
