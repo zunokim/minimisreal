@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
+import type { ReactElement } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 
 type Row = {
@@ -31,7 +32,7 @@ function descFromPeriod(p: string): string {
   return `${y}년 ${q}분기`
 }
 
-export default function RoneOfficeClient(): JSX.Element {
+export default function RoneOfficeClient(): ReactElement {
   // ----- 수집 -----
   const now = new Date()
   const [ingYear, setIngYear] = useState<number>(now.getFullYear())
