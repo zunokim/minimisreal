@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 import { ReactNode } from 'react'
 
 export const metadata: Metadata = {
-  title: 'S T R A T E G Y',
+  title: 'Just Do It!',
 }
 
 export default function LoginLayout({ children }: { children: ReactNode }) {
