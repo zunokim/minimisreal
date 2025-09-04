@@ -22,7 +22,7 @@ export type RoneRow = {
 const RONE_BASE = 'https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do'
 
 // API Key 탐색(서버/클라 환경 변수 모두 대응)
-function getRoneKey() {
+function getRoneKey(): string {
   return (
     process.env.RONE_API_KEY ||
     process.env.NEXT_PUBLIC_RONE_API_KEY ||
@@ -57,13 +57,19 @@ export function parseQuarter(period: string): { year: number; q: 1 | 2 | 3 | 4 }
   return { year: d.getFullYear(), q: (Math.floor(d.getMonth() / 3) + 1) as 1 | 2 | 3 | 4 }
 }
 
-export function toQuarterDesc(year: number, q: 1 | 2 | 3 | 4) {
+export function toQuarterDesc(year: number, q: 1 | 2 | 3 | 4): string {
   return `${year}년 ${q}분기`
 }
 
 // ----------------------
 // 단일 페이지 호출기
 // ----------------------
+type SttsApiBox = { row?: unknown }
+
+function isSttsApiBox(x: unknown): x is SttsApiBox {
+  return typeof x === 'object' && x !== null && 'row' in (x as Record<string, unknown>)
+}
+
 export async function roneFetchRows(params: {
   STATBL_ID: string
   DTACYCLE_CD?: string
@@ -85,11 +91,17 @@ export async function roneFetchRows(params: {
   const text = await res.text()
 
   try {
-    const json = JSON.parse(text)
-    const box = json?.SttsApiTblData?.find((b: any) => Array.isArray(b?.row))
-    const rows: RoneRow[] = box?.row ?? []
-    if (!Array.isArray(rows)) throw new Error('row 배열이 없습니다.')
-    return rows
+    const json: unknown = JSON.parse(text)
+    const boxes = (json as Record<string, unknown>)?.SttsApiTblData as unknown
+    const box = Array.isArray(boxes)
+      ? (boxes.find(isSttsApiBox) as SttsApiBox | undefined)
+      : undefined
+
+    const rowsUnknown = box?.row
+    if (!Array.isArray(rowsUnknown)) throw new Error('row 배열이 없습니다.')
+
+    // 런타임 상 RoneRow 형태로 내려오므로 단언
+    return rowsUnknown as RoneRow[]
   } catch {
     const head = text.trim().slice(0, 300)
     throw new Error(`R-ONE 응답이 JSON이 아닙니다. 미리보기: ${head}`)
@@ -123,7 +135,10 @@ export async function roneFetchAllRows(params: {
 }
 
 // ---- 기존 지수용 (환경변수 키 호환 강화) ----
-export async function fetchOfficeIndexForPeriod(_period: string) {
+export async function fetchOfficeIndexForPeriod(period: string): Promise<RoneRow[]> {
+  // 형식 검증(분기 파싱); 반환값은 사용하지 않아도 함수 호출 자체는 의미가 있습니다.
+  parseQuarter(period)
+
   const STATBL_ID =
     process.env.RONE_OFFICE_INDEX_STATBL_ID ||   // 현재 권장 키
     process.env.RONE_OFFICE_STATBL_ID ||         // 과거 키
@@ -137,7 +152,7 @@ export async function fetchOfficeIndexForPeriod(_period: string) {
 }
 
 // ---- 공실률: 연도별 STATBL_ID 선택 ----
-export function pickVacancyStatblId(year: number, q: 1 | 2 | 3 | 4) {
+export function pickVacancyStatblId(year: number, q: 1 | 2 | 3 | 4): string {
   if (year > 2024 || (year === 2024 && q >= 3)) return (process.env.RONE_OFFICE_VACANCY_TT ?? 'TT244763134428698')
   if (year >= 2022) return (process.env.RONE_OFFICE_VACANCY_2022 ?? 'A_2024_00253')
   if (year === 2021) return (process.env.RONE_OFFICE_VACANCY_2021 ?? 'A_2024_00250')
@@ -160,11 +175,11 @@ const HUB_FALLBACK_SUBCLS: Record<'CBD'|'KBD'|'YBD', string[]> = {
   YBD: ['여의도','영등포역','공덕역','당산역'],
 }
 
-function normalizeDesc(s?: string | null) {
+function normalizeDesc(s?: string | null): string {
   return (s ?? '').replace(/[\s\u00A0]/g, '')
 }
 
-function timeMatch(rows: RoneRow[], year: number, q: 1|2|3|4) {
+function timeMatch(rows: RoneRow[], year: number, q: 1|2|3|4): RoneRow[] {
   const desc = normalizeDesc(`${year}년 ${q}분기`)
   const id1 = `${year}0${q}`
   const mm = q * 3
@@ -180,7 +195,7 @@ function timeMatch(rows: RoneRow[], year: number, q: 1|2|3|4) {
   return cands
 }
 
-function preferHigherLevel(a: RoneRow, b: RoneRow) {
+function preferHigherLevel(a: RoneRow, b: RoneRow): number {
   const da = (a.CLS_FULLNM ?? '').split('>').length
   const db = (b.CLS_FULLNM ?? '').split('>').length
   if (da !== db) return da - db

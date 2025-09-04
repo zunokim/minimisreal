@@ -1,39 +1,75 @@
 // src/app/api/rone/office-index/list/route.ts
+export const runtime = 'nodejs'
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!
+type Region = 'CBD' | 'KBD' | 'YBD'
+type Row = {
+  period: string
+  wrttime_desc: string | null
+  region_code: Region
+  region_name: string | null
+  value: number | null
+  unit?: string | null
+}
 
-export async function GET(req: NextRequest) {
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+})
+
+function qMonth(q: number): '03' | '06' | '09' | '12' {
+  return ['03', '06', '09', '12'][q - 1] as '03' | '06' | '09' | '12'
+}
+function toDbPeriod(y: number, q: number): string {
+  return `${y}${qMonth(q)}`
+}
+function toDbPeriod5(y: number, q: number): string {
+  return `${y}0${q}`
+}
+
+export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(req.url)
-    const year = url.searchParams.get('year') // 예: 2024
-    const from = url.searchParams.get('from') // 예: 202401
-    const to = url.searchParams.get('to')     // 예: 202412
-    const limit = Number(url.searchParams.get('limit') ?? '48')
+    const startYear = Number(url.searchParams.get('startYear'))
+    const startQ = Number(url.searchParams.get('startQ'))
+    const endYear = Number(url.searchParams.get('endYear'))
+    const endQ = Number(url.searchParams.get('endQ'))
+    const regionParam = (url.searchParams.get('region') ?? 'ALL').toUpperCase()
+    const region = (['CBD', 'KBD', 'YBD'].includes(regionParam)
+      ? (regionParam as Region)
+      : 'ALL') as Region | 'ALL'
 
-    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } })
-    let q = supabase.from('office_rent_index').select('*').order('period', { ascending: true }).order('region_code', { ascending: true })
-
-    if (year) {
-      q = q.gte('period', `${year}01`).lte('period', `${year}12`)
-    } else if (from && to) {
-      q = q.gte('period', from).lte('period', to)
-    } else {
-      // 기본: 최근 8개 분기 정도를 커버하도록 최근 24개월 범위
-      const now = new Date()
-      const y = now.getFullYear()
-      const m = String(now.getMonth() + 1).padStart(2, '0')
-      const yyyymm = `${y}${m}`
-      const y2 = y - 2
-      q = q.gte('period', `${y2}01`).lte('period', yyyymm)
+    if (!startYear || !startQ || !endYear || !endQ) {
+      return NextResponse.json({ error: '유효한 기간을 입력해 주세요.' }, { status: 400 })
     }
 
-    const { data, error } = await q.limit(limit)
-    if (error) throw error
-    return NextResponse.json({ count: data?.length ?? 0, rows: data ?? [] })
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'unknown' }, { status: 500 })
+    const start = toDbPeriod(startYear, startQ)
+    const end = toDbPeriod(endYear, endQ)
+    let query = supabase
+      .from('rone_office_index')
+      .select('period, wrttime_desc, region_code, region_name, value, unit')
+      .or(
+        [
+          `and(period.gte.${start},period.lte.${end})`,
+          `and(period.gte.${toDbPeriod5(startYear, startQ)},period.lte.${toDbPeriod5(endYear, endQ)})`,
+        ].join(',')
+      )
+      .order('period', { ascending: false })
+      .order('region_code', { ascending: true })
+
+    if (region !== 'ALL') query = query.eq('region_code', region)
+
+    const { data, error } = await query.returns<Row[]>()
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    return NextResponse.json({ rows: data ?? [] })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
