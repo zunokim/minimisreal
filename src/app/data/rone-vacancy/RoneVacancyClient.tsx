@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
+import type { ReactElement } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 
 type Row = {
@@ -31,7 +32,7 @@ function descFromPeriod(p: string): string {
   return `${y}년 ${q}분기`
 }
 
-export default function RoneVacancyClient(): JSX.Element {
+export default function RoneVacancyClient(): ReactElement {
   const now = new Date()
 
   // 수집(단일 분기)
