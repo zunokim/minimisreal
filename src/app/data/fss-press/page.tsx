@@ -1,4 +1,3 @@
-// src/app/data/fss-press/page.tsx
 'use client'
 
 export const dynamic = 'force-dynamic'
@@ -54,6 +53,33 @@ function formatDateInput(d: Date) {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
+}
+
+/** 조회수 숫자 변환 */
+function toViews(v: number | string): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  const n = Number(String(v).replace(/,/g, '').trim())
+  return Number.isFinite(n) ? n : 0
+}
+
+/** 제목에 ‘증권’ 포함 여부 */
+function isSecuritiesTitle(title: string): boolean {
+  return /증권/.test(title)
+}
+
+/** 작은 배지 UI */
+function Badge({ children, title, className = '' }: { children: string; title?: string; className?: string }) {
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 shadow-sm select-none',
+        className,
+      ].join(' ')}
+    >
+      {children}
+    </span>
+  )
 }
 
 export default function FssPressPage() {
@@ -228,6 +254,10 @@ export default function FssPressPage() {
           const title = decodeHtmlEntities(item.subject)
           const body = decodeHtmlEntities(item.contentsKor)
           const dateText = item.regDate ? new Date(item.regDate).toLocaleString() : ''
+          const views = toViews(item.viewCnt)
+          const isHot = views >= 10000
+          const isSec = isSecuritiesTitle(title)
+
           return (
             <article key={item.contentId} className="border rounded-xl p-4 bg-white">
               <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500 mb-1">
@@ -235,8 +265,22 @@ export default function FssPressPage() {
                 <span>·</span>
                 <time>{dateText}</time>
                 <span>·</span>
-                <span>조회수 {item.viewCnt}</span>
+                <span>조회수 {views.toLocaleString()}</span>
+
+                <div className="ml-auto flex flex-wrap items-center gap-1">
+                  {isHot && (
+                    <Badge className="border-red-300 bg-red-50 text-red-700" title="조회수 10000 이상">
+                      🔥 핫
+                    </Badge>
+                  )}
+                  {isSec && (
+                    <Badge className="border-blue-300 bg-blue-50 text-blue-700" title="제목에 ‘증권’ 포함">
+                      증권업
+                    </Badge>
+                  )}
+                </div>
               </div>
+
               <a
                 href={item.originUrl}
                 target="_blank"

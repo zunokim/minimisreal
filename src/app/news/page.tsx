@@ -1,4 +1,3 @@
-// src/app/news/page.tsx
 'use client'
 
 import { useMemo, useState } from 'react'
@@ -62,6 +61,31 @@ function hhmm(dateISO: string | null) {
     if (!dateISO) return ''
     const d = new Date(dateISO)
     return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+}
+
+// HTML 엔티티 디코더 (&quot; → ", &amp; → & 등)
+function decodeHtmlEntities(input?: string | null): string {
+    if (!input) return ''
+    let s = String(input)
+    s = s.replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    s = s.replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    const map: Record<string, string> = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&apos;': "'",
+        '&nbsp;': ' ',
+        '&ldquo;': '“',
+        '&rdquo;': '”',
+        '&lsquo;': '‘',
+        '&rsquo;': '’',
+        '&hellip;': '…',
+        '&middot;': '·',
+    }
+    s = s.replace(/&[a-zA-Z]+?;|&#\d+;|&#x[0-9a-fA-F]+;/g, (m) => map[m] ?? m)
+    return s
 }
 
 // 토픽 배지
@@ -196,7 +220,10 @@ export default function NewsPage() {
                 if (!selectedPublishers.includes(p)) return false
             }
             if (qs.length > 0) {
-                const hay = `${n.title} ${n.snippet || ''} ${n.publisher || ''}`.toLowerCase()
+                // 디코딩된 제목/스니펫 기준으로 검사하면 검색 일관성이 좋아집니다.
+                const title = decodeHtmlEntities(n.title)
+                const snippet = decodeHtmlEntities(n.snippet)
+                const hay = `${title} ${snippet} ${n.publisher || ''}`.toLowerCase()
                 for (const term of qs) {
                     if (!hay.includes(term.toLowerCase())) return false
                 }
@@ -531,29 +558,33 @@ export default function NewsPage() {
                         </div>
 
                         <ul className="mt-3 divide-y">
-                            {items.map((n) => (
-                                <li key={n.id} className="py-3">
-                                    <div className="flex flex-col gap-1">
-                                        {/* 제목 */}
-                                        <Link href={n.source_url} target="_blank" className="font-medium hover:underline break-words">
-                                            {highlight(n.title, queryTerms)}
-                                            <ExternalLink className="inline ml-1 h-3.5 w-3.5 align-[-2px]" />
-                                        </Link>
+                            {items.map((n) => {
+                                const titleDecoded = decodeHtmlEntities(n.title)
+                                const snippetDecoded = decodeHtmlEntities(n.snippet)
+                                return (
+                                    <li key={n.id} className="py-3">
+                                        <div className="flex flex-col gap-1">
+                                            {/* 제목 (엔티티 디코딩 + 하이라이트) */}
+                                            <Link href={n.source_url} target="_blank" className="font-medium hover:underline break-words">
+                                                {highlight(titleDecoded, queryTerms)}
+                                                <ExternalLink className="inline ml-1 h-3.5 w-3.5 align-[-2px]" />
+                                            </Link>
 
-                                        {/* 메타 */}
-                                        <div className="text-xs text-gray-500">
-                                            {n.publisher || 'Unknown'} · {hhmm(n.published_at || n.fetched_at)}
+                                            {/* 메타 */}
+                                            <div className="text-xs text-gray-500">
+                                                {n.publisher || 'Unknown'} · {hhmm(n.published_at || n.fetched_at)}
+                                            </div>
+
+                                            {/* 요약 프리뷰 (엔티티 디코딩 + 하이라이트) */}
+                                            {n.snippet && (
+                                                <p className="text-sm text-gray-700 mt-1 leading-relaxed">
+                                                    {highlight(snippetDecoded, queryTerms)}
+                                                </p>
+                                            )}
                                         </div>
-
-                                        {/* 요약 프리뷰 */}
-                                        {n.snippet && (
-                                            <p className="text-sm text-gray-700 mt-1 leading-relaxed">
-                                                {highlight(n.snippet, queryTerms)}
-                                            </p>
-                                        )}
-                                    </div>
-                                </li>
-                            ))}
+                                    </li>
+                                )
+                            })}
                         </ul>
                     </section>
                 )
