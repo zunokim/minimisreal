@@ -14,10 +14,13 @@ interface WeatherData {
 
 // 🔹 외부/내부 링크 분리
 const externalLinks = [
-  { name: 'KOFIA', url: 'https://www.kofiabond.or.kr/' },
+  { name: '금융투자협회', url: 'https://www.kofiabond.or.kr/' },
   { name: '금융통계정보시스템', url: 'https://fisis.fss.or.kr/' },
   { name: 'DART', url: 'http://dart.fss.or.kr/' },
   { name: '금융감독원', url: 'https://www.fss.or.kr/' },
+  { name: '금융위원회', url: 'https://www.fsc.go.kr/' },
+  { name: '한국은행', url: 'https://www.bok.or.kr/' },
+  { name: '한국거래소', url: 'https://www.krx.co.kr/' },
   { name: '금융보안원', url: 'https://edu.fsec.or.kr/' },
   { name: '금융투자교육원', url: 'https://www.kifin.or.kr/' },
   { name: 'Chatgpt', url: 'https://chatgpt.com/' },

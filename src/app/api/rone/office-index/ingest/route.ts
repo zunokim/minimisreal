@@ -7,23 +7,53 @@ import {
   filterSeoulIndexAnchorsForQuarter,
 } from '@/lib/rone'
 
+type HubRow = {
+  period: string // '202403' | '202401' 등
+  period_desc?: string | null // '2024년 1분기' 등
+  region_code: 'CBD' | 'KBD' | 'YBD'
+  region_name?: string | null
+  value: number | string | null
+  unit?: string | null
+  raw?: unknown
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, ''))
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message || 'Unknown error'
+  try {
+    return JSON.stringify(e)
+  } catch {
+    return String(e)
+  }
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const body = await req.json().catch(() => ({}))
+    // 1) 입력 파싱
+    const body = (await req.json().catch(() => ({}))) as { period?: string }
     const periodRaw = String(body?.period ?? '').trim()
     if (!periodRaw) {
       return NextResponse.json({ error: 'period 가 필요합니다.' }, { status: 400 })
     }
 
+    // 2) 분기 파싱
     const { year, q } = parseQuarter(periodRaw)
 
-    // 여러 키 이름 허용(과거 호환)
+    // 3) STATBL_ID (과거 호환 포함)
     const STATBL_ID =
       process.env.RONE_OFFICE_INDEX_STATBL_ID ||
       process.env.RONE_OFFICE_STATBL_ID ||
@@ -38,7 +68,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // 페이지네이션 수집(1,000건 제한 회피)
+    // 4) 페이지네이션 수집
     const rows = await roneFetchAllRows({
       STATBL_ID,
       DTACYCLE_CD: 'QY',
@@ -46,7 +76,9 @@ export async function POST(req: NextRequest) {
       maxPages: 200,
     })
 
-    const hubs = filterSeoulIndexAnchorsForQuarter(rows, year, q)
+    // 5) 내부 헬퍼로 정규화된 hubs 확보
+    const hubs = filterSeoulIndexAnchorsForQuarter(rows, year, q) as HubRow[]
+
     if (hubs.length === 0) {
       return NextResponse.json(
         {
@@ -59,17 +91,17 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ✅ 기존 스키마 호환: wrttime_desc 컬럼에 저장
+    // 6) 업서트 페이로드 구성 (스키마에 정확히 맞춰 저장)
     const payload = hubs.map((h) => ({
-      period: h.period,               // 202403/202409 등
-      wrttime_desc: h.period_desc,    // ← DB 컬럼명에 맞춤
-      region_code: h.region_code,     // CBD/KBD/YBD
-      region_name: h.region_name,
-      value: h.value,
-      unit: h.unit,                   // 화면 표기는 숨겨도 DB엔 저장
+      period: h.period, // NOT NULL
+      wrttime_desc: h.period_desc ?? null,
+      region_code: h.region_code, // NOT NULL (UNIQUE 키)
+      region_name: h.region_name ?? null,
+      value: toNumberOrNull(h.value), // numeric 컬럼 안전 변환
+      unit: (h.unit ?? null) as string | null,
       source_statbl_id: STATBL_ID,
       source_dtacycle_cd: 'QY',
-      raw: h.raw as any,
+      raw: (h.raw ?? null) as Record<string, unknown> | null, // jsonb
     }))
 
     const { data, error } = await supabase
@@ -77,7 +109,9 @@ export async function POST(req: NextRequest) {
       .upsert(payload, { onConflict: 'period,region_code' })
       .select()
 
-    if (error) throw error
+    if (error) {
+      throw new Error(errMsg(error))
+    }
 
     return NextResponse.json({
       period: periodRaw,
@@ -85,10 +119,7 @@ export async function POST(req: NextRequest) {
       count: data?.length ?? 0,
       rows: data ?? [],
     })
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: String(err?.message ?? err) },
-      { status: 500 }
-    )
+  } catch (e: unknown) {
+    return NextResponse.json({ error: errMsg(e) }, { status: 500 })
   }
 }

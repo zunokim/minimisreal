@@ -12,22 +12,26 @@ type Row = {
   value: number | null
 }
 
-const TABLE = 'rone_office_vacancy'
+const TABLE = 'rone_office_vacancy' as const
 
-function qMonth(q: number): '03'|'06'|'09'|'12' {
-  return ['03','06','09','12'][q-1] as '03'|'06'|'09'|'12'
+function qMonth(q: number): '03' | '06' | '09' | '12' {
+  return ['03', '06', '09', '12'][q - 1] as '03' | '06' | '09' | '12'
+}
+function toDbPeriod5(y: number, q: number): string {
+  // YYYY0Q 형태
+  return `${y}0${q}`
 }
 function toDbPeriod(y: number, q: number): string {
   return `${y}${qMonth(q)}`
 }
 function descFromPeriod(p: string): string {
-  const y = p.slice(0,4)
+  const y = p.slice(0, 4)
   const m = p.slice(4)
-  const q = ({ '03':1, '06':2, '09':3, '12':4 } as const)[m as '03'|'06'|'09'|'12']
+  const q = ({ '03': 1, '06': 2, '09': 3, '12': 4 } as const)[m as '03' | '06' | '09' | '12']
   return `${y}년 ${q}분기`
 }
 
-export default function RoneVacancyClient() {
+export default function RoneVacancyClient(): JSX.Element {
   const now = new Date()
 
   // 수집(단일 분기)
@@ -50,9 +54,9 @@ export default function RoneVacancyClient() {
   const startPeriod = useMemo(() => toDbPeriod(startYear, startQ), [startYear, startQ])
   const endPeriod = useMemo(() => toDbPeriod(endYear, endQ), [endYear, endQ])
 
-  const years = Array.from({ length: (now.getFullYear() - 2020 + 1) }, (_, i) => now.getFullYear() - i)
+  const years = Array.from({ length: now.getFullYear() - 2020 + 1 }, (_, i) => now.getFullYear() - i)
 
-  const ingest = async () => {
+  const ingest = async (): Promise<void> => {
     setIngLoading(true)
     setShowDetails(false)
     setIngResult([])
@@ -63,23 +67,25 @@ export default function RoneVacancyClient() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ period }),
       })
-      const data = await resp.json()
+      const data: { rows?: Row[]; error?: string } = await resp.json()
       if (!resp.ok) throw new Error(data?.error || '수집 실패')
-      setIngResult((data?.rows ?? []).map((r: any) => ({
+      setIngResult((data?.rows ?? []).map((r) => ({
         period: r.period,
         wrttime_desc: r.wrttime_desc,
         region_code: r.region_code,
         region_name: r.region_name,
         value: r.value,
       })))
-    } catch (e: any) {
-      alert(e?.message || '수집 실패')
+      setShowDetails(true)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      alert(msg || '수집 실패')
     } finally {
       setIngLoading(false)
     }
   }
 
-  const fetchRows = async () => {
+  const fetchRows = async (): Promise<void> => {
     setLoading(true)
     setError(null)
     setRows([])
@@ -87,24 +93,30 @@ export default function RoneVacancyClient() {
       let query = supabase
         .from(TABLE)
         .select('period, wrttime_desc, region_code, region_name, value')
-        .gte('period', startPeriod)
-        .lte('period', endPeriod)
+        // YYYYMM + YYYY0Q 형식 포함
+        .or(
+          [
+            `and(period.gte.${startPeriod},period.lte.${endPeriod})`,
+            `and(period.gte.${toDbPeriod5(startYear, startQ)},period.lte.${toDbPeriod5(endYear, endQ)})`,
+          ].join(',')
+        )
         .order('period', { ascending: false })
         .order('region_code', { ascending: true })
 
       if (region !== 'ALL') query = query.eq('region_code', region)
 
       const { data, error: err } = await query.returns<Row[]>()
-      if (err) throw new Error(err.message)
+      if (err) throw err
       setRows(data ?? [])
-    } catch (e: any) {
-      setError(e?.message || '조회 실패')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg || '조회 중 오류가 발생했습니다.')
     } finally {
       setLoading(false)
     }
   }
 
-  const downloadExcel = () => {
+  const downloadExcel = (): void => {
     const url = new URL('/api/rone/office-vacancy/export', window.location.origin)
     url.searchParams.set('startYear', String(startYear))
     url.searchParams.set('startQ', String(startQ))
@@ -120,9 +132,14 @@ export default function RoneVacancyClient() {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-gray-500 whitespace-nowrap">R-ONE</div>
-          <h2 className="text-2xl font-bold whitespace-nowrap">임대 지역별 공실률(오피스)</h2>
+          <h2 className="text-2xl font-bold whitespace-nowrap">공실률(오피스)</h2>
         </div>
-        <Link href="/data" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 whitespace-nowrap">← 뒤로가기</Link>
+        <Link
+          href="/data"
+          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 whitespace-nowrap"
+        >
+          ← 뒤로가기
+        </Link>
       </div>
 
       {/* 수집 카드 */}
@@ -135,44 +152,59 @@ export default function RoneVacancyClient() {
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">연도</div>
-            <select value={ingYear} onChange={(e) => setIngYear(Number(e.target.value))} className="w-full rounded-md border px-3 py-2 bg-white">
-              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            <select
+              value={ingYear}
+              onChange={(e) => setIngYear(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              {years.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
             </select>
           </label>
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">분기</div>
-            <select value={ingQ} onChange={(e) => setIngQ(Number(e.target.value))} className="w-full rounded-md border px-3 py-2 bg-white">
-              <option value={1}>1분기</option><option value={2}>2분기</option><option value={3}>3분기</option><option value={4}>4분기</option>
+            <select
+              value={ingQ}
+              onChange={(e) => setIngQ(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              <option value={1}>1분기</option>
+              <option value={2}>2분기</option>
+              <option value={3}>3분기</option>
+              <option value={4}>4분기</option>
             </select>
           </label>
-          <div className="col-span-2 sm:col-span-2 flex items-end gap-2">
+          <div className="flex items-end">
             <button
               onClick={ingest}
               disabled={ingLoading}
-              className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-50 active:scale-[0.99] whitespace-nowrap text-xs sm:text-sm md:text-base"
+              className="w-full inline-flex items-center justify-center whitespace-nowrap min-w-[96px] rounded-md bg-black text-white px-4 py-2.5 disabled:opacity-50"
             >
-              {ingLoading ? '수집 중…' : 'API 수집'}
+              {ingLoading ? '수집 중…' : '수집'}
             </button>
+          </div>
+          <div className="flex items-end">
             <button
-              onClick={() => setShowDetails(v => !v)}
-              className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-50 active:scale-[0.99] whitespace-nowrap text-xs sm:text-sm md:text-base"
-              aria-expanded={showDetails}
+              onClick={() => setShowDetails((v) => !v)}
+              className="w-full inline-flex items-center justify-center whitespace-nowrap min-w-[96px] rounded-md border px-4 py-2.5"
             >
-              {showDetails ? '상세 닫기' : '상세 보기'}
+              {showDetails ? '결과 숨기기' : '결과 보기'}
             </button>
           </div>
         </div>
 
         {showDetails && (
-          <div className="mt-4 border rounded-xl overflow-hidden">
-            <div className="max-h-[45vh] overflow-auto">
+          <div className="mt-4">
+            <div className="text-sm text-gray-600 mb-2">수집 결과</div>
+            <div className="rounded-lg border overflow-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="bg-gray-50">
                   <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
                     <th className="whitespace-nowrap">분기(설명)</th>
                     <th className="whitespace-nowrap">시점코드</th>
                     <th className="whitespace-nowrap">지역</th>
-                    <th className="whitespace-nowrap text-right">값</th>
+                    <th className="text-right whitespace-nowrap">값</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -201,76 +233,96 @@ export default function RoneVacancyClient() {
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 연도/분기)</div>
 
+        {/* 입력 */}
         <div className="mt-3 grid grid-cols-3 sm:grid-cols-7 gap-3 items-end">
-          {/* 시작 */}
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">시작 연도</div>
-            <select value={startYear} onChange={(e) => setStartYear(Number(e.target.value))}
-                    className="w-full rounded-md border px-3 py-2 bg-white">
-              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            <select
+              value={startYear}
+              onChange={(e) => setStartYear(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              {years.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
             </select>
           </label>
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">시작 분기</div>
-            <select value={startQ} onChange={(e) => setStartQ(Number(e.target.value))}
-                    className="w-full rounded-md border px-3 py-2 bg-white">
-              <option value={1}>1분기</option><option value={2}>2분기</option><option value={3}>3분기</option><option value={4}>4분기</option>
+            <select
+              value={startQ}
+              onChange={(e) => setStartQ(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              <option value={1}>1분기</option>
+              <option value={2}>2분기</option>
+              <option value={3}>3분기</option>
+              <option value={4}>4분기</option>
             </select>
           </label>
 
-          {/* ~ */}
-          <div className="hidden sm:flex items-center justify-center text-gray-500 pb-2">~</div>
-          <div className="sm:hidden col-span-3 text-center text-gray-500">~</div>
-
-          {/* 끝 */}
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">끝 연도</div>
-            <select value={endYear} onChange={(e) => setEndYear(Number(e.target.value))}
-                    className="w-full rounded-md border px-3 py-2 bg-white">
-              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            <select
+              value={endYear}
+              onChange={(e) => setEndYear(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              {years.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
             </select>
           </label>
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">끝 분기</div>
-            <select value={endQ} onChange={(e) => setEndQ(Number(e.target.value))}
-                    className="w-full rounded-md border px-3 py-2 bg-white">
-              <option value={1}>1분기</option><option value={2}>2분기</option><option value={3}>3분기</option><option value={4}>4분기</option>
+            <select
+              value={endQ}
+              onChange={(e) => setEndQ(Number(e.target.value))}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
+              <option value={1}>1분기</option>
+              <option value={2}>2분기</option>
+              <option value={3}>3분기</option>
+              <option value={4}>4분기</option>
             </select>
           </label>
 
-          {/* 지역 */}
           <label className="text-sm">
             <div className="text-gray-600 mb-1 whitespace-nowrap">지역</div>
-            <select value={region} onChange={(e) => setRegion(e.target.value as any)}
-                    className="w-full rounded-md border px-3 py-2 bg-white">
+            <select
+              value={region}
+              onChange={(e) => setRegion(e.target.value as 'ALL' | 'CBD' | 'KBD' | 'YBD')}
+              className="w-full rounded-md border px-3 py-2 bg-white"
+            >
               <option value="ALL">전체</option>
-              <option value="CBD">CBD(도심)</option>
-              <option value="KBD">KBD(강남)</option>
-              <option value="YBD">YBD(여의도·마포)</option>
+              <option value="CBD">CBD</option>
+              <option value="KBD">KBD</option>
+              <option value="YBD">YBD</option>
             </select>
           </label>
+
+          <div className="flex gap-2 col-span-3 sm:col-span-2">
+            <button
+              onClick={fetchRows}
+              disabled={loading}
+              className="inline-flex items-center justify-center whitespace-nowrap min-w-[96px] rounded-md bg-black text-white px-4 py-2.5 disabled:opacity-50"
+            >
+              {loading ? '조회 중…' : '조회'}
+            </button>
+            <button
+              onClick={downloadExcel}
+              className="inline-flex items-center justify-center whitespace-nowrap min-w-[96px] rounded-md border px-4 py-2.5"
+            >
+              엑셀
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            onClick={fetchRows}
-            disabled={loading}
-            className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-50 active:scale-[0.99] whitespace-nowrap text-xs sm:text-sm md:text-base"
-          >
-            {loading ? '조회 중…' : '조회'}
-          </button>
-          <button
-            onClick={downloadExcel}
-            className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-50 active:scale-[0.99] whitespace-nowrap text-xs sm:text-sm md:text-base"
-          >
-            엑셀 다운로드
-          </button>
-        </div>
-
-        <div className="mt-4 border rounded-xl overflow-hidden">
-          <div className="max-h-[50vh] overflow-auto">
+        {/* 결과 */}
+        <div className="mt-4">
+          <div className="rounded-lg border overflow-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0">
+              <thead className="bg-gray-50">
                 <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
                   <th className="whitespace-nowrap">분기(설명)</th>
                   <th className="whitespace-nowrap">시점코드</th>
