@@ -27,6 +27,14 @@ function descFromPeriod(p: string): string {
   return `${y}년 ${q}분기`
 }
 
+type Row = {
+  period: string
+  wrttime_desc: string | null
+  region_code: 'CBD' | 'KBD' | 'YBD'
+  region_name: string | null
+  value: number | null
+}
+
 export async function GET(req: NextRequest): Promise<Response> {
   try {
     const url = new URL(req.url)
@@ -43,7 +51,10 @@ export async function GET(req: NextRequest): Promise<Response> {
     const start = toDbPeriod(startYear, startQ)
     const end = toDbPeriod(endYear, endQ)
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY)
+    const supabase = createClient(
+      SUPABASE_URL,
+      (SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY) as string
+    )
 
     let query = supabase
       .from(TABLE)
@@ -59,7 +70,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
     if (region !== 'ALL') query = query.eq('region_code', region)
 
-    const { data, error } = await query
+    const { data, error } = await query.returns<Row[]>()
     if (error) throw new Error(error.message)
 
     const rows = (data ?? []).map((r) => [
@@ -73,10 +84,11 @@ export async function GET(req: NextRequest): Promise<Response> {
     const ws = XLSX.utils.aoa_to_sheet([['분기(설명)', '시점코드', '지역', '값'], ...rows])
     XLSX.utils.book_append_sheet(wb, ws, 'office_index')
 
-    const buf: Buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+    // ✅ 웹 Response 호환: ArrayBuffer 로 생성
+    const ab = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
     const filename = `office_index_${start}-${end}${region !== 'ALL' ? '_' + region : ''}.xlsx`
 
-    return new Response(buf, {
+    return new Response(ab, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
