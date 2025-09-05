@@ -4,7 +4,6 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import * as cheerio from 'cheerio'
-import type { Cheerio } from 'cheerio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,8 +40,11 @@ function parseIntSafe(s?: string | null): number | null {
   const n = Number(String(s ?? '').replace(/[^\d]/g, ''))
   return Number.isFinite(n) ? n : null
 }
-function pickText($el: Cheerio<unknown>): string {
-  return ($el.text() || '').replace(/\u00A0/g, ' ').replace(/[ \t]+/g, ' ').trim()
+function pickText($el: { text: () => string }): string {
+  return ($el.text() || '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
 }
 /** 용량표시/잡다한 공백 제거 */
 function cleanFileName(name: string): string {
