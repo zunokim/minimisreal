@@ -146,22 +146,8 @@ export default function DataClient() {
       <h2 className="text-2xl font-bold">API Data</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(Object.keys(DATASETS) as DatasetKey[]).map((key) => (
-          <button
-            key={key}
-            onClick={() => setOpen(key)}
-            className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
-          >
-            <div className="text-sm text-gray-500">{DATASETS[key].source}</div>
-            <div className="text-lg font-semibold mt-1">{DATASETS[key].title}</div>
-            <div className="text-sm text-gray-600 mt-1">{DATASETS[key].desc}</div>
-            <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
-              자세히 보기
-              <span aria-hidden>→</span>
-            </div>
-          </button>
-        ))}
 
+        
         {/* ── 신규 카드 2: 금융위원회 알림마당 보도자료 검색(동일 페이지로 이동) ── */}
         <Link
           href="/data/fsc-press"
@@ -187,6 +173,23 @@ export default function DataClient() {
             자세히 보기<span aria-hidden>→</span>
           </div>
         </Link>
+        
+        {(Object.keys(DATASETS) as DatasetKey[]).map((key) => (
+          <button
+            key={key}
+            onClick={() => setOpen(key)}
+            className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+          >
+            <div className="text-sm text-gray-500">{DATASETS[key].source}</div>
+            <div className="text-lg font-semibold mt-1">{DATASETS[key].title}</div>
+            <div className="text-sm text-gray-600 mt-1">{DATASETS[key].desc}</div>
+            <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+              자세히 보기
+              <span aria-hidden>→</span>
+            </div>
+          </button>
+        ))}
+
 
         {/* --- R-ONE: 오피스 임대가격지수 --- */}
         <Link

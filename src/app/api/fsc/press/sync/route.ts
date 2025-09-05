@@ -1,10 +1,10 @@
 // API 라우트 ②: 크롤링 + DB 저장(Supabase upsert)
 // src/app/api/fsc/press/sync/route.ts
-/* eslint-disable @typescript-eslint/consistent-type-definitions */
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import * as cheerio from 'cheerio'
+import type { Cheerio, Element } from 'cheerio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,16 +41,16 @@ function parseIntSafe(s?: string | null): number | null {
   const n = Number(String(s ?? '').replace(/[^\d]/g, ''))
   return Number.isFinite(n) ? n : null
 }
-function pickText($el: cheerio.Cheerio): string {
+function pickText($el: Cheerio<Element>): string {
   return ($el.text() || '').replace(/\u00A0/g, ' ').replace(/[ \t]+/g, ' ').trim()
 }
 /** 용량표시/잡다한 공백 제거 */
 function cleanFileName(name: string): string {
   let s = name.replace(/\s+/g, ' ').trim()
+  // "(1 MB)" 등 용량 꼬리표 제거
   s = s.replace(/\s*\((?:\d+(?:\.\d+)?)\s*(?:B|KB|MB|GB|TB)\)\s*$/i, '').trim()
   return s
 }
-/** 파일명처럼 보이는지 */
 function looksLikeFileName(s: string): boolean {
   const t = s.trim()
   if (!t) return false
@@ -121,7 +121,7 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
     const $block = $(block)
     // 파일명 후보: 같은 블록의 첫 번째 span.name
     let fileName = cleanFileName(pickText($block.find('span.name').first()))
-    // 용량만 표시된 경우, 다른 name에서 보정
+    // 용량만 표시된 경우 보정
     if (!fileName || /^\((?:\d+(?:\.\d+)?)\s*(?:B|KB|MB|GB|TB)\)$/i.test(fileName)) {
       const names = $block.find('span.name').toArray().map(el => cleanFileName(pickText($(el)))).filter(Boolean)
       if (names.length > 0) fileName = names.find(n => looksLikeFileName(n)) || names[0]
@@ -142,8 +142,6 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
             ''
           const pathName = u.pathname.split('/').pop() ?? ''
           const guess = (qpName || pathName || '').trim()
-          // "getFile" 같은 값은 이름으로 허용하지 않음
-          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
           fileName = (!guess || /^getfile(\.\w+)?$/i.test(guess)) ? '첨부파일' : guess
         } catch {
           fileName = '첨부파일'
@@ -177,7 +175,6 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
                 ''
               const pathName = u.pathname.split('/').pop() ?? ''
               const guess = (qpName || pathName || '').trim()
-              // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
               fileName = (!guess || /^getfile(\.\w+)?$/i.test(guess)) ? '첨부파일' : guess
             } catch {
               fileName = '첨부파일'
@@ -188,7 +185,7 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
       })
   }
 
-  // 최종 폴백: 페이지 전체에서 getFile 링크만 있는 경우
+  // 최종 폴백
   if (attachments.length === 0) {
     $('a[href*="/comm/getFile"]').each((_, a) => {
       const $a = $(a)
@@ -205,7 +202,6 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
             ''
           const pathName = u.pathname.split('/').pop() ?? ''
           const guess = (qpName || pathName || '').trim()
-          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
           fileName = (!guess || /^getfile(\.\w+)?$/i.test(guess)) ? '첨부파일' : guess
         } catch {
           fileName = '첨부파일'
@@ -274,17 +270,15 @@ export async function GET(req: NextRequest) {
         const row = parseDetail(html, url, id)
         if (row.date && row.date >= start && row.date <= end && row.url) rows.push(row)
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn('[fsc-press] 상세 파싱 실패:', id, errorToString(e))
       }
     }
 
-    // 저장 (⚠️ content_id 존재/부재로 분리 업서트하여 두 유니크 제약을 모두 안전하게 처리)
+    // 저장: content_id와 url 분리 업서트
     if (rows.length > 0) {
       const clean = rows
         .filter(r => r.url && r.url.trim().length > 0)
         .map(r => ({
-          // 문자열 강제 변환(혹시 숫자로 들어와도 대비)
           content_id: (r.content_id ?? '').toString(),
           title: r.title,
           department: r.department,
@@ -297,7 +291,6 @@ export async function GET(req: NextRequest) {
       const withId = clean.filter(r => r.content_id && r.content_id.trim() !== '')
       const withoutId = clean.filter(r => !r.content_id || r.content_id.trim() === '')
 
-      // 1) content_id가 있는 건 content_id로 업서트 (content_id 유니크 충돌 방지)
       if (withId.length > 0) {
         const { error: upErr1 } = await supabase
           .from('fsc_press')
@@ -312,8 +305,6 @@ export async function GET(req: NextRequest) {
           )
         }
       }
-
-      // 2) content_id가 없는 건 url로 업서트 (url 유니크 충돌 방지)
       if (withoutId.length > 0) {
         const { error: upErr2 } = await supabase
           .from('fsc_press')
@@ -338,7 +329,6 @@ export async function GET(req: NextRequest) {
     })
   } catch (err: unknown) {
     const msg = errorToString(err)
-    // eslint-disable-next-line no-console
     console.error('[fsc/sync] error:', msg)
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
