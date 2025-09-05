@@ -1,3 +1,4 @@
+// src\app\data\DataClient.tsx
 'use client'
 
 import Link from 'next/link'
@@ -33,7 +34,11 @@ function ymAdd(ym: string, diff: number): string {
 }
 function formatNumber(n: number | null, _unit?: string | null): string {
   if (n === null || n === undefined) return '-'
-  try { return n.toLocaleString() } catch { return String(n) }
+  try {
+    return n.toLocaleString()
+  } catch {
+    return String(n)
+  }
 }
 
 export default function DataClient() {
@@ -157,14 +162,27 @@ export default function DataClient() {
           </button>
         ))}
 
-        {/* 보도자료 카드 (검색 페이지로 이동) */}
+        {/* ── 신규 카드 2: 금융위원회 알림마당 보도자료 검색(동일 페이지로 이동) ── */}
+        <Link
+          href="/data/fsc-press"
+          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+        >
+          <div className="text-sm text-gray-500">금융위원회</div>
+          <div className="text-lg font-semibold mt-1">금융위원회 보도자료</div>
+          <div className="text-sm text-gray-600 mt-1">금융위원회 보도자료 기간별 크롤링 및 조회</div>
+          <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+            자세히 보기<span aria-hidden>→</span>
+          </div>
+        </Link>
+
+        {/* 보도자료 카드 (금융감독원 - 기존 유지) */}
         <Link
           href="/data/fss-press"
           className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
         >
           <div className="text-sm text-gray-500">금융감독원</div>
-          <div className="text-lg font-semibold mt-1">보도자료(실적보고용)</div>
-          <div className="text-sm text-gray-600 mt-1">실적보고 사용을 위한 보도자료 크롤링</div>
+          <div className="text-lg font-semibold mt-1">금융감독원 보도자료</div>
+          <div className="text-sm text-gray-600 mt-1">금융감독원 보도자료 기간별 크롤링 및 조회</div>
           <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
             자세히 보기<span aria-hidden>→</span>
           </div>
@@ -195,13 +213,16 @@ export default function DataClient() {
             자세히 보기<span aria-hidden>→</span>
           </div>
         </Link>
-
       </div>
 
       {/* 이하: 기존 KOSIS 모달 */}
       {open && (
         <>
-          <button className="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-40" aria-label="닫기" onClick={() => setOpen(null)} />
+          <button
+            className="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-40"
+            aria-label="닫기"
+            onClick={() => setOpen(null)}
+          />
           <div className="fixed inset-x-0 top-16 mx-auto max-w-6xl z-50">
             <div className="rounded-2xl border bg-white shadow-xl p-4 md:p-6">
               <div className="flex items-start justify-between gap-2">
@@ -209,39 +230,75 @@ export default function DataClient() {
                   <div className="text-xs text-gray-500">{open ? DATASETS[open].source : ''}</div>
                   <h3 className="text-xl font-bold">{title}</h3>
                 </div>
-                <button onClick={() => setOpen(null)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">닫기</button>
+                <button
+                  onClick={() => setOpen(null)}
+                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+                >
+                  닫기
+                </button>
               </div>
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
-                  <input value={start} onChange={(e) => setStart(e.target.value)} placeholder="예: 202301"
-                         className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200" />
+                  <input
+                    value={start}
+                    onChange={(e) => setStart(e.target.value)}
+                    placeholder="예: 202301"
+                    className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200"
+                  />
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
-                  <input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="예: 202512"
-                         className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200" />
+                  <input
+                    value={end}
+                    onChange={(e) => setEnd(e.target.value)}
+                    placeholder="예: 202512"
+                    className="w-full rounded-md border px-3 py-2 focus:outline-none focus:ring focus:ring-gray-200"
+                  />
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">지역</div>
-                  <select value={region} onChange={(e) => setRegion(e.target.value)} className="w-full rounded-md border px-3 py-2 bg-white">
-                    {regionOptions.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                  <select
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 bg-white"
+                  >
+                    {regionOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="text-sm">
                   <div className="text-gray-600 mb-1">항목</div>
-                  <select value={itm} onChange={(e) => setItm(e.target.value)} className="w-full rounded-md border px-3 py-2 bg-white">
-                    {itmOptions.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                  <select
+                    value={itm}
+                    onChange={(e) => setItm(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 bg-white"
+                  >
+                    {itmOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>
 
               <div className="mt-3 flex items-center gap-2">
-                <button onClick={fetchRows} disabled={loading} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]">
+                <button
+                  onClick={fetchRows}
+                  disabled={loading}
+                  className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]"
+                >
                   {loading ? '조회 중…' : '조회'}
                 </button>
-                <button onClick={downloadCsv} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]">
+                <button
+                  onClick={downloadCsv}
+                  className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 active:scale-[0.99]"
+                >
                   CSV 다운로드
                 </button>
               </div>
@@ -251,17 +308,31 @@ export default function DataClient() {
                   <table className="min-w-full text-sm">
                     <thead className="bg-gray-50 sticky top-0">
                       <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
-                        <th>시점(PRD_DE)</th><th>지역</th><th>항목</th><th className="text-right">값</th>
+                        <th>시점(PRD_DE)</th>
+                        <th>지역</th>
+                        <th>항목</th>
+                        <th className="text-right">값</th>
                       </tr>
                     </thead>
                     <tbody>
                       {error ? (
-                        <tr><td colSpan={4} className="px-3 py-6 text-red-600">{error}</td></tr>
+                        <tr>
+                          <td colSpan={4} className="px-3 py-6 text-red-600">
+                            {error}
+                          </td>
+                        </tr>
                       ) : rows.length === 0 ? (
-                        <tr><td colSpan={4} className="px-3 py-6 text-gray-500">조회 결과가 없습니다. 위의 필터를 설정한 뒤 &quot;조회&quot;를 눌러주세요.</td></tr>
+                        <tr>
+                          <td colSpan={4} className="px-3 py-6 text-gray-500">
+                            조회 결과가 없습니다. 위의 필터를 설정한 뒤 &quot;조회&quot;를 눌러주세요.
+                          </td>
+                        </tr>
                       ) : (
                         rows.map((r, i) => (
-                          <tr key={`${r.prd_de}-${r.region_code}-${r.itm_id}-${i}`} className="odd:bg-white even:bg-gray-50">
+                          <tr
+                            key={`${r.prd_de}-${r.region_code}-${r.itm_id}-${i}`}
+                            className="odd:bg-white even:bg-gray-50"
+                          >
                             <td className="px-3 py-2">{r.prd_de}</td>
                             <td className="px-3 py-2">{r.region_name ?? r.region_code}</td>
                             <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
