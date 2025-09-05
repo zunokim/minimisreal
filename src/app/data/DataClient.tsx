@@ -1,4 +1,5 @@
-// src\app\data\DataClient.tsx
+// src/app/data/DataClient.tsx
+
 'use client'
 
 import Link from 'next/link'
@@ -39,6 +40,22 @@ function formatNumber(n: number | null, _unit?: string | null): string {
   } catch {
     return String(n)
   }
+}
+
+/** 우상단 라벨 배지 */
+function CornerBadge({ type }: { type: '업무지원' | 'MIS' }) {
+  const style =
+    type === '업무지원'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : 'border-green-200 bg-green-50 text-green-700'
+
+  return (
+    <span
+      className={`absolute right-3 top-3 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium shadow-sm ${style}`}
+    >
+      {type}
+    </span>
+  )
 }
 
 export default function DataClient() {
@@ -146,13 +163,12 @@ export default function DataClient() {
       <h2 className="text-2xl font-bold">API Data</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-        
-        {/* ── 신규 카드 2: 금융위원회 알림마당 보도자료 검색(동일 페이지로 이동) ── */}
+        {/* ── 금융위원회 보도자료 (업무지원) ── */}
         <Link
           href="/data/fsc-press"
-          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+          className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
         >
+          <CornerBadge type="업무지원" />
           <div className="text-sm text-gray-500">금융위원회</div>
           <div className="text-lg font-semibold mt-1">금융위원회 보도자료</div>
           <div className="text-sm text-gray-600 mt-1">금융위원회 보도자료 기간별 크롤링 및 조회</div>
@@ -161,11 +177,12 @@ export default function DataClient() {
           </div>
         </Link>
 
-        {/* 보도자료 카드 (금융감독원 - 기존 유지) */}
+        {/* ── 금융감독원 보도자료 (업무지원) ── */}
         <Link
           href="/data/fss-press"
-          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+          className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
         >
+          <CornerBadge type="업무지원" />
           <div className="text-sm text-gray-500">금융감독원</div>
           <div className="text-lg font-semibold mt-1">금융감독원 보도자료</div>
           <div className="text-sm text-gray-600 mt-1">금융감독원 보도자료 기간별 크롤링 및 조회</div>
@@ -173,29 +190,30 @@ export default function DataClient() {
             자세히 보기<span aria-hidden>→</span>
           </div>
         </Link>
-        
+
+        {/* ── KOSIS 모달로 열리는 데이터셋들 (MIS) ── */}
         {(Object.keys(DATASETS) as DatasetKey[]).map((key) => (
           <button
             key={key}
             onClick={() => setOpen(key)}
-            className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+            className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
           >
+            <CornerBadge type="MIS" />
             <div className="text-sm text-gray-500">{DATASETS[key].source}</div>
             <div className="text-lg font-semibold mt-1">{DATASETS[key].title}</div>
             <div className="text-sm text-gray-600 mt-1">{DATASETS[key].desc}</div>
             <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
-              자세히 보기
-              <span aria-hidden>→</span>
+              자세히 보기<span aria-hidden>→</span>
             </div>
           </button>
         ))}
 
-
-        {/* --- R-ONE: 오피스 임대가격지수 --- */}
+        {/* --- R-ONE: 오피스 임대가격지수 (MIS) --- */}
         <Link
           href="/data/rone-office"
-          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+          className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
         >
+          <CornerBadge type="MIS" />
           <div className="text-sm text-gray-500">R-ONE</div>
           <div className="text-lg font-semibold mt-1">임대동향 지역별 임대가격지수(오피스)</div>
           <div className="text-sm text-gray-600 mt-1">CBD / KBD / YBD · 분기</div>
@@ -204,11 +222,12 @@ export default function DataClient() {
           </div>
         </Link>
 
-        {/* --- R-ONE: 오피스 공실률 --- */}
+        {/* --- R-ONE: 오피스 공실률 (MIS) --- */}
         <Link
           href="/data/rone-vacancy"
-          className="text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+          className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
         >
+          <CornerBadge type="MIS" />
           <div className="text-sm text-gray-500">R-ONE</div>
           <div className="text-lg font-semibold mt-1">임대 지역별 공실률(오피스)</div>
           <div className="text-sm text-gray-600 mt-1">CBD / KBD / YBD · 분기</div>
@@ -229,9 +248,13 @@ export default function DataClient() {
           <div className="fixed inset-x-0 top-16 mx-auto max-w-6xl z-50">
             <div className="rounded-2xl border bg-white shadow-xl p-4 md:p-6">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="text-xs text-gray-500">{open ? DATASETS[open].source : ''}</div>
-                  <h3 className="text-xl font-bold">{title}</h3>
+                <div className="flex items-center gap-2">
+                  <div>
+                    <div className="text-xs text-gray-500">{open ? DATASETS[open].source : ''}</div>
+                    <h3 className="text-xl font-bold">{title}</h3>
+                  </div>
+                  {/* 모달 헤더에도 MIS 배지 */}
+                  <CornerBadge type="MIS" />
                 </div>
                 <button
                   onClick={() => setOpen(null)}

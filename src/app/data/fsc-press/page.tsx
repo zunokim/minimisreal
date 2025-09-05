@@ -40,7 +40,7 @@ function toKoreanDate(iso: string) {
 }
 
 export default function FscPressPage() {
-  // 기본 기간: 오늘 ~ 30일 전
+  // 기본 기간: 오늘 ~ 3일 전
   const today = useMemo(() => new Date(), [])
   const defEnd = useMemo(() => formatDateInput(today), [today])
   const defStart = useMemo(() => {

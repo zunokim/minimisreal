@@ -35,7 +35,7 @@ function decodeHtmlEntities(input?: string | null): string {
     '&gt;': '>',
     '&quot;': '"',
     '&#39;': "'",
-    '&apos;': "'",
+    '&apos': "'",
     '&nbsp;': ' ',
     '&ldquo;': '“',
     '&rdquo;': '”',
@@ -210,20 +210,21 @@ export default function FssPressPage() {
           </div>
         </div>
 
+        {/* 버튼 정렬/강조 변경: DB에서 조회(검정) → API 데이터 수집(테두리) → 초기화 */}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={onSync}
-            disabled={disabled || loading}
-            className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-40"
-          >
-            {loading ? '수집 중…' : 'API 데이터 수집'}
-          </button>
           <button
             onClick={onSearchDb}
             disabled={disabled || loading}
-            className="px-4 py-2 rounded-lg border"
+            className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-40"
           >
             DB에서 조회
+          </button>
+          <button
+            onClick={onSync}
+            disabled={disabled || loading}
+            className="px-4 py-2 rounded-lg border"
+          >
+            {loading ? '수집 중…' : 'API 데이터 수집'}
           </button>
           <button
             onClick={onReset}
@@ -240,8 +241,9 @@ export default function FssPressPage() {
           )}
         </div>
 
+        {/* 안내 문구 변경 */}
         <p className="mt-3 text-xs text-gray-500">
-          * API 수집 후 조회는 DB 조회로 조회(API 횟수 제한 有)
+          * API 데이터 수집은 해당 웹사이트에서 데이터를 최초 크롤링해올 때 사용합니다. 이후 조회는 <b>DB에서 조회</b>해주세요.
         </p>
 
         {syncInfo && <div className="mt-2 text-sm text-emerald-700">{syncInfo}</div>}
