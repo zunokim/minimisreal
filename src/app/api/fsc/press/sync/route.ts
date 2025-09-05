@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import * as cheerio from 'cheerio'
-import type { Cheerio, Element } from 'cheerio'
+import type { Cheerio } from 'cheerio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,13 +41,12 @@ function parseIntSafe(s?: string | null): number | null {
   const n = Number(String(s ?? '').replace(/[^\d]/g, ''))
   return Number.isFinite(n) ? n : null
 }
-function pickText($el: Cheerio<Element>): string {
+function pickText($el: Cheerio<unknown>): string {
   return ($el.text() || '').replace(/\u00A0/g, ' ').replace(/[ \t]+/g, ' ').trim()
 }
 /** 용량표시/잡다한 공백 제거 */
 function cleanFileName(name: string): string {
   let s = name.replace(/\s+/g, ' ').trim()
-  // "(1 MB)" 등 용량 꼬리표 제거
   s = s.replace(/\s*\((?:\d+(?:\.\d+)?)\s*(?:B|KB|MB|GB|TB)\)\s*$/i, '').trim()
   return s
 }
@@ -119,9 +118,8 @@ function parseDetail(html: string, url: string, contentId: string): PressRow {
 
   $('.file-list').each((_, block) => {
     const $block = $(block)
-    // 파일명 후보: 같은 블록의 첫 번째 span.name
+    // 파일명 후보
     let fileName = cleanFileName(pickText($block.find('span.name').first()))
-    // 용량만 표시된 경우 보정
     if (!fileName || /^\((?:\d+(?:\.\d+)?)\s*(?:B|KB|MB|GB|TB)\)$/i.test(fileName)) {
       const names = $block.find('span.name').toArray().map(el => cleanFileName(pickText($(el)))).filter(Boolean)
       if (names.length > 0) fileName = names.find(n => looksLikeFileName(n)) || names[0]
@@ -270,6 +268,7 @@ export async function GET(req: NextRequest) {
         const row = parseDetail(html, url, id)
         if (row.date && row.date >= start && row.date <= end && row.url) rows.push(row)
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.warn('[fsc-press] 상세 파싱 실패:', id, errorToString(e))
       }
     }
@@ -329,6 +328,7 @@ export async function GET(req: NextRequest) {
     })
   } catch (err: unknown) {
     const msg = errorToString(err)
+    // eslint-disable-next-line no-console
     console.error('[fsc/sync] error:', msg)
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
