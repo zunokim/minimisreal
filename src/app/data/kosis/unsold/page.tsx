@@ -4,13 +4,13 @@
 import Link from 'next/link'
 import { useMemo, useEffect, useState } from 'react'
 
-type ApiOk<T> = { ok: true; status: number; data?: T; inserted?: number; skipped?: number; attempts?: Attempt[] }
-type ApiErr = { ok: false; status: number; message: string; details?: unknown }
-type ApiResp<T> = ApiOk<T> | ApiErr
-
 type Attempt =
   | { scope: string; ok: true; count: number; usedParams: Record<string, string> }
   | { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+
+type ApiOk<T> = { ok: true; status: number; data?: T; inserted?: number; skipped?: number; attempts?: Attempt[] }
+type ApiErr = { ok: false; status: number; message: string; details?: unknown }
+type ApiResp<T> = ApiOk<T> | ApiErr
 
 type Row = {
   prd_de: string
@@ -34,9 +34,9 @@ function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleS
 function yyyymmToLabel(ym: string): string { return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym }
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
-  const success = attempts.filter((a) => a.ok && a.count >= 0) as Array<{ scope: string; ok: true; count: number }>
+  const success = attempts.filter((a) => a.ok && a.count >= 0)
   const fail = attempts.filter((a) => !a.ok)
-  const successWithData = success.filter((s) => s.count > 0)
+  const successWithData = success.filter((s) => s.count > 0) as Array<{ scope: string; ok: true; count: number }>
   const lastSuccessMonth =
     successWithData.length > 0
       ? successWithData.map((s) => s.scope).sort().at(-1) ?? ''
@@ -94,7 +94,6 @@ export default function Page() {
       let data: ApiResp<unknown>
       try { data = JSON.parse(text) } catch { data = { ok: false, status: res.status, message: text.slice(0, 300) } }
       if (!res.ok || !data.ok) throw new Error(('message' in data && data.message) || `HTTP ${res.status}`)
-
       const s = summarizeAttempts((data as ApiOk<unknown>).attempts)
       setAttempts((data as ApiOk<unknown>).attempts)
       setIngMsg(`완료: success=${s.successCount}, fail=${s.failCount}${s.lastSuccessMonth ? `, last=${s.lastSuccessMonth}` : ''}`)
@@ -123,10 +122,8 @@ export default function Page() {
     }
   }
 
-  // 초기 자동 1회 조회
   useEffect(() => { void fetchList() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [])
 
-  const headers = rows[0] ? Object.keys(rows[0] as any) : ['prd_de', 'region_name', 'itm_name', 'value']
   const attemptSummary = summarizeAttempts(attempts)
 
   return (
@@ -211,20 +208,27 @@ export default function Page() {
         <div className="mt-4 overflow-auto rounded border">
           <table className="min-w-[720px] w-full text-sm">
             <thead className="bg-gray-50">
-              <tr>{headers.map((h) => <th key={h} className="text-left px-3 py-2 border-b">{h}</th>)}</tr>
+              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
+                <th>월</th>
+                <th>지역명</th>
+                <th>항목</th>
+                <th className="text-right">값</th>
+                <th>단위</th>
+              </tr>
             </thead>
             <tbody>
               {error ? (
-                <tr><td className="px-3 py-6 text-red-600" colSpan={headers.length}>{error}</td></tr>
+                <tr><td className="px-3 py-6 text-red-600" colSpan={5}>{error}</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td className="px-3 py-6 text-gray-500" colSpan={headers.length}>조회 결과가 없습니다.</td></tr>
+                <tr><td className="px-3 py-6 text-gray-500" colSpan={5}>조회 결과가 없습니다.</td></tr>
               ) : (
-                rows.map((r, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    {headers.map((h) => {
-                      const v = (r as any)[h]
-                      return <td key={h} className="px-3 py-2 border-b">{h === 'value' ? fmtNum(v as number | null) : String(v ?? '')}</td>
-                    })}
+                rows.map((r) => (
+                  <tr key={`${r.prd_de}-${r.region_code}-${r.itm_id}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="px-3 py-2">{yyyymmToLabel(r.prd_de)}</td>
+                    <td className="px-3 py-2">{r.region_name ?? r.region_code}</td>
+                    <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
+                    <td className="px-3 py-2 text-right">{fmtNum(r.value)}</td>
+                    <td className="px-3 py-2">{r.unit ?? ''}</td>
                   </tr>
                 ))
               )}

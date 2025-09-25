@@ -32,17 +32,29 @@ function monthRange(start: string, end: string): string[] {
   return out
 }
 
-/** 행 단위로 C2/C1 중 존재하는 지역코드/이름을 안전하게 선택 */
-function pickRegion(r: Record<string, any>, prefer: 'C1' | 'C2'): { code: string; name: string | null } {
-  const order = prefer === 'C2' ? (['C2', 'C1'] as const) : (['C1', 'C2'] as const)
-  for (const key of order) {
-    const code = r[key]
-    const name = r[`${key}_NM`]
-    if (code != null && code !== '') {
-      return { code: String(code), name: name != null ? String(name) : null }
-    }
-  }
-  return { code: '000', name: null }
+/** KOSIS 표준 응답(실데이터) 형태 */
+interface KosisRow {
+  ORG_ID?: string
+  TBL_ID?: string
+  PRD_SE?: string
+  PRD_DE?: string
+  ITM_ID?: string
+  ITM_NM?: string
+  UNIT_NM?: string
+  DT?: string | number
+  C1?: string
+  C1_NM?: string
+  C2?: string
+  C2_NM?: string
+  // 확장 파라미터가 올 수 있으나, 여기서는 사용하지 않음
+  [key: string]: unknown
+}
+
+/** KOSIS 에러 응답 형태 */
+interface KosisErrorBody {
+  errCd?: string
+  errMsg?: string
+  [key: string]: unknown
 }
 
 type DatasetKey = 'hcsi' | 'unsold' | 'unsold_after'
@@ -52,6 +64,48 @@ const DEFAULTS = {
   unsold: { orgId: '101', tblId: 'DT_1YL202004E', prdSe: 'M', itmId: 'ALL', objL1: 'ALL', objL2: 'ALL', regionKey: 'C2' as const },
   unsold_after: { orgId: '116', tblId: 'DT_MLTM_5328', prdSe: 'M', regionKey: 'C2' as const },
 }
+
+/** 행 단위로 C2/C1 중 존재하는 지역코드/이름을 안전하게 선택 */
+function pickRegion(r: KosisRow, prefer: 'C1' | 'C2'): { code: string; name: string | null } {
+  const order = prefer === 'C2' ? (['C2', 'C1'] as const) : (['C1', 'C2'] as const)
+  for (const key of order) {
+    const code = (r as Record<string, unknown>)[key]
+    const name = (r as Record<string, unknown>)[`${key}_NM`]
+    if (typeof code === 'string' && code !== '') {
+      return { code, name: typeof name === 'string' ? name : null }
+    }
+  }
+  return { code: '000', name: null }
+}
+
+/** Supabase에 넣을 공통 Row */
+interface CommonDbRow {
+  org_id: string
+  tbl_id: string
+  prd_se: string
+  prd_de: string
+  region_code: string
+  region_name: string | null
+  itm_id: string
+  itm_name: string | null
+  unit: string | null
+  value: number | null
+}
+
+/** kosis_unsold_after용 Row (upsert) */
+interface UnsoldAfterDbRow extends CommonDbRow {
+  inserted_at: string
+  updated_at: string
+}
+
+/** hcsi/unsold용 Row (insert dedupe) */
+interface NormalDbRow extends CommonDbRow {
+  raw: KosisRow
+}
+
+type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
+type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+type Attempt = AttemptOk | AttemptFail
 
 export async function GET(req: NextRequest) {
   try {
@@ -74,9 +128,9 @@ export async function GET(req: NextRequest) {
     const prdSe = sp.get('prdSe') || def.prdSe
     const startPrdDe = sp.get('startPrdDe') || undefined
     const endPrdDe = sp.get('endPrdDe') || startPrdDe
-    const itmId = sp.get('itmId') || (def as any).itmId || undefined
-    const objL1 = sp.get('objL1') || (def as any).objL1 || undefined
-    const objL2 = sp.get('objL2') || (def as any).objL2 || undefined
+    const itmId = sp.get('itmId') || (def as { itmId?: string }).itmId || undefined
+    const objL1 = sp.get('objL1') || (def as { objL1?: string }).objL1 || undefined
+    const objL2 = sp.get('objL2') || (def as { objL2?: string }).objL2 || undefined
     const objL3 = sp.get('objL3') || undefined
     const objL4 = sp.get('objL4') || undefined
     const regionKeyPref = (sp.get('regionKey') as 'C1' | 'C2' | null) || def.regionKey
@@ -92,16 +146,11 @@ export async function GET(req: NextRequest) {
 
     const supabase = createClient(requireEnv('NEXT_PUBLIC_SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'))
 
-    const attempts: Array<
-      { scope: string; ok: true; count: number; usedParams: Record<string, string> } |
-      { scope: string; ok: false; error: string; usedParams: Record<string, string> }
-    > = []
-
+    const attempts: Attempt[] = []
     let totalInserted = 0
     let totalUpserted = 0
     let totalSkipped = 0
 
-    // 월별 호출 (하나라도 없어도 전체는 계속 진행)
     for (const scope of months) {
       const q = new URLSearchParams()
       q.set('method', 'getList')
@@ -122,44 +171,51 @@ export async function GET(req: NextRequest) {
       const usedParams = Object.fromEntries(q.entries())
       const url = `https://kosis.kr/openapi/Param/statisticsParameterData.do?${q.toString()}`
 
-      // KOSIS 호출
+      // ===== KOSIS 호출 & 파싱 =====
       let bodyText = ''
-      let arr: any[] = []
+      let arr: KosisRow[] = []
       try {
         const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
         bodyText = await res.text()
 
-        // 일부 케이스는 200이면서 본문에 에러 코드가 포함됨
-        let parsed: unknown
-        try { parsed = JSON.parse(bodyText) } catch { parsed = null }
-
+        // 1) HTTP 오류
         if (!res.ok) {
-          const msg = `HTTP ${res.status}`
-          attempts.push({ scope, ok: false, error: `KOSIS error: ${msg}`, usedParams })
+          attempts.push({ scope, ok: false, error: `KOSIS error: HTTP ${res.status}`, usedParams })
           continue
         }
 
+        // 2) 본문 파싱
+        const parsed: unknown = JSON.parse(bodyText)
+
+        // 배열이면 정상 데이터
         if (Array.isArray(parsed)) {
+          // unknown[] → KosisRow[] 로 옮기기 (필요 키만 사용)
           arr = parsed
-        } else if (parsed && typeof parsed === 'object' && 'errCd' in (parsed as any)) {
-          // KOSIS 오류 포맷(예: {errCd:"30", errMsg:"데이터가 존재하지 않습니다."})
-          const e = parsed as { errCd?: string; errMsg?: string }
-          const code = e.errCd ?? 'NA'
-          const msg = e.errMsg ?? 'Unknown error'
-          if (code === '30') {
-            // 요청 월에 데이터 없음 → 정상적으로 "0건" 처리
+            .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+            .map((v) => v as KosisRow)
+        } else if (parsed && typeof parsed === 'object') {
+          // 에러 포맷인지 확인
+          const e = parsed as KosisErrorBody
+          if (e.errCd) {
+            const code = e.errCd
+            const msg = e.errMsg ?? 'Unknown error'
+            if (code === '30' || /데이터가 존재하지 않습니다/.test(msg)) {
+              // 데이터 없음 → 0건 성공 처리
+              attempts.push({ scope, ok: true, count: 0, usedParams })
+              continue
+            }
+            attempts.push({ scope, ok: false, error: `KOSIS error ${code}: ${msg}`, usedParams })
+            continue
+          }
+          // 비정형 객체
+          if (JSON.stringify(parsed).includes('데이터가 존재하지 않습니다')) {
             attempts.push({ scope, ok: true, count: 0, usedParams })
             continue
           }
-          attempts.push({ scope, ok: false, error: `KOSIS error ${code}: ${msg}`, usedParams })
+          attempts.push({ scope, ok: false, error: 'KOSIS response parse error', usedParams })
           continue
         } else {
-          // 비정형 본문
-          if (bodyText.includes('데이터가 존재하지 않습니다')) {
-            attempts.push({ scope, ok: true, count: 0, usedParams })
-            continue
-          }
-          attempts.push({ scope, ok: false, error: `KOSIS response parse error`, usedParams })
+          attempts.push({ scope, ok: false, error: 'KOSIS response parse error', usedParams })
           continue
         }
       } catch (e) {
@@ -167,51 +223,52 @@ export async function GET(req: NextRequest) {
         continue
       }
 
-      // 맵핑
-      const mapped = arr
-        .map((r) => {
+      // ===== 맵핑 =====
+      const mappedCommon: CommonDbRow[] = arr
+        .map((r): CommonDbRow | null => {
           const { code, name } = pickRegion(r, regionKeyPref)
-          const base = {
+          const prd_de = typeof r.PRD_DE === 'string' ? r.PRD_DE : undefined
+          if (!prd_de) return null
+          return {
             org_id: r.ORG_ID ?? orgId,
             tbl_id: r.TBL_ID ?? tblId,
             prd_se: r.PRD_SE ?? prdSe,
-            prd_de: r.PRD_DE as string | undefined,
+            prd_de,
             region_code: code,
             region_name: name,
-            itm_id: (r.ITM_ID ?? itmId ?? 'ALL') as string,
-            itm_name: (r.ITM_NM ?? null) as string | null,
-            unit: (r.UNIT_NM ?? null) as string | null,
+            itm_id: r.ITM_ID ?? (itmId ?? 'ALL'),
+            itm_name: r.ITM_NM ?? null,
+            unit: r.UNIT_NM ?? null,
             value: toNumber(r.DT),
           }
-          if (dataset === 'unsold_after') {
-            return {
-              ...base,
-              inserted_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }
-          }
-          return { ...base, raw: r }
         })
-        .filter((r) => r.prd_de && typeof r.prd_de === 'string')
+        .filter((v): v is CommonDbRow => v !== null)
 
-      // 월별 DB 저장
+      // ===== DB 저장(월별) =====
       if (dataset === 'unsold_after') {
-        const { error } = await supabase.from('kosis_unsold_after').upsert(mapped as any[], {
+        const rows: UnsoldAfterDbRow[] = mappedCommon.map((b) => ({
+          ...b,
+          inserted_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }))
+
+        const { error } = await supabase.from('kosis_unsold_after').upsert(rows, {
           onConflict: 'tbl_id,itm_id,region_code,prd_de,org_id',
           ignoreDuplicates: false,
         })
         if (error) {
-          attempts.push({ scope, ok: false, error: `upsert failed: ${(error as any).message ?? 'unknown'}`, usedParams })
+          attempts.push({ scope, ok: false, error: `upsert failed: ${String((error as { message?: string }).message ?? error)}`, usedParams })
           continue
         }
-        attempts.push({ scope, ok: true, count: (mapped as any[]).length, usedParams })
-        totalUpserted += (mapped as any[]).length
+        attempts.push({ scope, ok: true, count: rows.length, usedParams })
+        totalUpserted += rows.length
         continue
       }
 
       const table = dataset === 'hcsi' ? 'kosis_hcsi' : 'kosis_unsold'
       const keyFields = ['org_id', 'tbl_id', 'prd_se', 'prd_de', 'region_code', 'itm_id'] as const
-      const prdSet = Array.from(new Set((mapped as any[]).map((r) => r.prd_de)))
+
+      const prdSet = Array.from(new Set(mappedCommon.map((r) => r.prd_de)))
       const { data: existing, error: exErr } = await supabase
         .from(table)
         .select(keyFields.join(','))
@@ -220,36 +277,42 @@ export async function GET(req: NextRequest) {
         .eq('tbl_id', tblId)
 
       if (exErr) {
-        attempts.push({ scope, ok: false, error: `select failed: ${(exErr as any).message ?? 'unknown'}`, usedParams })
+        attempts.push({ scope, ok: false, error: `select failed: ${String((exErr as { message?: string }).message ?? exErr)}`, usedParams })
         continue
       }
 
-      const existSet = new Set((existing ?? []).map((e: any) => keyFields.map((k) => e[k]).join('|')))
-      const toInsert = (mapped as any[]).filter((r) => !existSet.has(keyFields.map((k) => r[k]).join('|')))
+      const existSet = new Set(
+        (existing as Array<Record<string, string>> | null | undefined)?.map((e) =>
+          keyFields.map((k) => e[k]).join('|'),
+        ) ?? [],
+      )
+      const toInsert: NormalDbRow[] = mappedCommon
+        .filter((r) => !existSet.has(keyFields.map((k) => r[k]).join('|')))
+        .map((r, idx) => {
+          // raw는 진단용으로 필요하면 나중에 넣을 수 있으나 여기선 미사용 → 빈 객체로 대체
+          const raw: KosisRow = {}
+          return { ...r, raw }
+        })
 
       if (toInsert.length > 0) {
         const { error: insErr } = await supabase.from(table).insert(toInsert)
         if (insErr) {
-          attempts.push({ scope, ok: false, error: `insert failed: ${(insErr as any).message ?? 'unknown'}`, usedParams })
+          attempts.push({ scope, ok: false, error: `insert failed: ${String((insErr as { message?: string }).message ?? insErr)}`, usedParams })
           continue
         }
       }
 
-      attempts.push({ scope, ok: true, count: (mapped as any[]).length, usedParams })
+      attempts.push({ scope, ok: true, count: mappedCommon.length, usedParams })
       totalInserted += toInsert.length
-      totalSkipped += (mapped as any[]).length - toInsert.length
+      totalSkipped += mappedCommon.length - toInsert.length
     }
 
-    // 전체 결과 집계 (부분 성공 허용)
+    // 전체 결과 (부분 성공 허용)
     const anySuccess = attempts.some((a) => a.ok && a.count >= 0)
-    const allZero = attempts.every((a) => a.ok && 'count' in a && a.count === 0)
-
     if (!anySuccess) {
-      // 전부 실패한 경우만 실패 처리
       return NextResponse.json({ ok: false, status: 502, message: 'All attempts failed', attempts }, { status: 502 })
     }
 
-    // 부분 성공 → 200 OK로 성공 처리
     return NextResponse.json({
       ok: true,
       status: 200,
