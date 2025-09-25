@@ -1,4 +1,3 @@
-// src/app/api/kosis/import/route.ts
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
@@ -46,7 +45,6 @@ interface KosisRow {
   C1_NM?: string
   C2?: string
   C2_NM?: string
-  // 확장 파라미터가 올 수 있으나, 여기서는 사용하지 않음
   [key: string]: unknown
 }
 
@@ -78,7 +76,7 @@ function pickRegion(r: KosisRow, prefer: 'C1' | 'C2'): { code: string; name: str
   return { code: '000', name: null }
 }
 
-/** Supabase에 넣을 공통 Row */
+/** Supabase 공통 Row(맵핑 후) */
 interface CommonDbRow {
   org_id: string
   tbl_id: string
@@ -102,6 +100,9 @@ interface UnsoldAfterDbRow extends CommonDbRow {
 interface NormalDbRow extends CommonDbRow {
   raw: KosisRow
 }
+
+/** 기존 키 조회용 타입 */
+type ExistingKeyRow = Pick<CommonDbRow, 'org_id' | 'tbl_id' | 'prd_se' | 'prd_de' | 'region_code' | 'itm_id'>
 
 type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
@@ -178,36 +179,29 @@ export async function GET(req: NextRequest) {
         const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
         bodyText = await res.text()
 
-        // 1) HTTP 오류
         if (!res.ok) {
           attempts.push({ scope, ok: false, error: `KOSIS error: HTTP ${res.status}`, usedParams })
           continue
         }
 
-        // 2) 본문 파싱
         const parsed: unknown = JSON.parse(bodyText)
 
-        // 배열이면 정상 데이터
         if (Array.isArray(parsed)) {
-          // unknown[] → KosisRow[] 로 옮기기 (필요 키만 사용)
           arr = parsed
             .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
             .map((v) => v as KosisRow)
         } else if (parsed && typeof parsed === 'object') {
-          // 에러 포맷인지 확인
           const e = parsed as KosisErrorBody
           if (e.errCd) {
             const code = e.errCd
             const msg = e.errMsg ?? 'Unknown error'
             if (code === '30' || /데이터가 존재하지 않습니다/.test(msg)) {
-              // 데이터 없음 → 0건 성공 처리
               attempts.push({ scope, ok: true, count: 0, usedParams })
               continue
             }
             attempts.push({ scope, ok: false, error: `KOSIS error ${code}: ${msg}`, usedParams })
             continue
           }
-          // 비정형 객체
           if (JSON.stringify(parsed).includes('데이터가 존재하지 않습니다')) {
             attempts.push({ scope, ok: true, count: 0, usedParams })
             continue
@@ -257,7 +251,12 @@ export async function GET(req: NextRequest) {
           ignoreDuplicates: false,
         })
         if (error) {
-          attempts.push({ scope, ok: false, error: `upsert failed: ${String((error as { message?: string }).message ?? error)}`, usedParams })
+          attempts.push({
+            scope,
+            ok: false,
+            error: `upsert failed: ${String((error as { message?: string }).message ?? error)}`,
+            usedParams,
+          })
           continue
         }
         attempts.push({ scope, ok: true, count: rows.length, usedParams })
@@ -271,33 +270,41 @@ export async function GET(req: NextRequest) {
       const prdSet = Array.from(new Set(mappedCommon.map((r) => r.prd_de)))
       const { data: existing, error: exErr } = await supabase
         .from(table)
-        .select(keyFields.join(','))
+        .select('org_id,tbl_id,prd_se,prd_de,region_code,itm_id')
         .in('prd_de', prdSet)
         .eq('org_id', orgId)
         .eq('tbl_id', tblId)
+        .returns<ExistingKeyRow[]>()
 
       if (exErr) {
-        attempts.push({ scope, ok: false, error: `select failed: ${String((exErr as { message?: string }).message ?? exErr)}`, usedParams })
+        attempts.push({
+          scope,
+          ok: false,
+          error: `select failed: ${String((exErr as { message?: string }).message ?? exErr)}`,
+          usedParams,
+        })
         continue
       }
 
-      const existSet = new Set(
-        (existing as Array<Record<string, string>> | null | undefined)?.map((e) =>
-          keyFields.map((k) => e[k]).join('|'),
-        ) ?? [],
-      )
+      const existingRows: ExistingKeyRow[] = existing ?? []
+      const existSet = new Set(existingRows.map((e) => keyFields.map((k) => e[k]).join('|')))
+
       const toInsert: NormalDbRow[] = mappedCommon
         .filter((r) => !existSet.has(keyFields.map((k) => r[k]).join('|')))
-        .map((r, idx) => {
-          // raw는 진단용으로 필요하면 나중에 넣을 수 있으나 여기선 미사용 → 빈 객체로 대체
-          const raw: KosisRow = {}
+        .map((r) => {
+          const raw: KosisRow = {} // 진단 필요 시 확장 가능
           return { ...r, raw }
         })
 
       if (toInsert.length > 0) {
         const { error: insErr } = await supabase.from(table).insert(toInsert)
         if (insErr) {
-          attempts.push({ scope, ok: false, error: `insert failed: ${String((insErr as { message?: string }).message ?? insErr)}`, usedParams })
+          attempts.push({
+            scope,
+            ok: false,
+            error: `insert failed: ${String((insErr as { message?: string }).message ?? insErr)}`,
+            usedParams,
+          })
           continue
         }
       }
@@ -307,7 +314,6 @@ export async function GET(req: NextRequest) {
       totalSkipped += mappedCommon.length - toInsert.length
     }
 
-    // 전체 결과 (부분 성공 허용)
     const anySuccess = attempts.some((a) => a.ok && a.count >= 0)
     if (!anySuccess) {
       return NextResponse.json({ ok: false, status: 502, message: 'All attempts failed', attempts }, { status: 502 })
