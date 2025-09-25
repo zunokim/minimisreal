@@ -1,13 +1,12 @@
 //src\app\data\kosis\hcsi\page.tsx
-
 'use client'
 
 import Link from 'next/link'
 import { useMemo, useState, useEffect } from 'react'
 
-type Attempt =
-  | { scope: string; ok: true; count: number; usedParams: Record<string, string> }
-  | { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
+type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+type Attempt = AttemptOk | AttemptFail
 
 type ApiOk<T> = { ok: true; status: number; data?: T; inserted?: number; upserted?: number; skipped?: number; attempts?: Attempt[] }
 type ApiErr = { ok: false; status: number; message: string; details?: unknown }
@@ -37,11 +36,17 @@ function fmtNum(n: number | null): string {
 function yyyymmToLabel(ym: string): string {
   return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym
 }
+
+/** 타입 가드: 성공 시도만 좁히기 */
+function isAttemptOk(a: Attempt): a is AttemptOk {
+  return a.ok === true && 'count' in a
+}
+
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
-  const success = attempts.filter((a) => a.ok && a.count >= 0)
+  const success = attempts.filter(isAttemptOk)
   const fail = attempts.filter((a) => !a.ok)
-  const successWithData = success.filter((s) => s.count > 0) as Array<{ scope: string; ok: true; count: number }>
+  const successWithData = success.filter((s) => s.count > 0)
   const lastSuccessMonth =
     successWithData.length > 0
       ? successWithData.map((s) => s.scope).sort().at(-1) ?? ''

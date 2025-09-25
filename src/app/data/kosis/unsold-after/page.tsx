@@ -4,13 +4,13 @@
 import Link from 'next/link'
 import { useMemo, useEffect, useState } from 'react'
 
+type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
+type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+type Attempt = AttemptOk | AttemptFail
+
 type ApiOk<T> = { ok: true; status: number; data?: T; upserted?: number; attempts?: Attempt[] }
 type ApiErr = { ok: false; status: number; message: string; details?: unknown }
 type ApiResp<T> = ApiOk<T> | ApiErr
-
-type Attempt =
-  | { scope: string; ok: true; count: number; usedParams: Record<string, string> }
-  | { scope: string; ok: false; error: string; usedParams: Record<string, string> }
 
 type Row = {
   prd_se: string
@@ -31,9 +31,14 @@ function defaultYmRange(): { start: string; end: string } {
 }
 function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleString() }
 function yyyymmToLabel(ym: string): string { return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym }
+
+/** 타입 가드 */
+function isAttemptOk(a: Attempt): a is AttemptOk {
+  return a.ok === true && 'count' in a
+}
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
-  const success = attempts.filter((a) => a.ok && a.count >= 0) as Array<{ scope: string; ok: true; count: number }>
+  const success = attempts.filter(isAttemptOk)
   const fail = attempts.filter((a) => !a.ok)
   const successWithData = success.filter((s) => s.count > 0)
   const lastSuccessMonth =
@@ -44,9 +49,9 @@ function summarizeAttempts(attempts?: Attempt[]) {
       : ''
   return { successCount: success.length, failCount: fail.length, lastSuccessMonth }
 }
+
 function fmtUpdatedAt(s: string | null): string {
   if (!s) return '-'
-  // 분까지만: YYYY-MM-DD HH:mm
   const d = new Date(s)
   if (isNaN(d.getTime())) return s
   const yyyy = d.getFullYear()
@@ -125,7 +130,6 @@ export default function Page() {
     }
   }
 
-  // 초기 1회 조회
   useEffect(() => { void fetchList() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [])
 
   const attemptSummary = summarizeAttempts(attempts)
@@ -178,7 +182,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* DB 조회 */}
+      {/* DB 조회 (월, 지역명, 값, 단위, 업데이트 날짜) */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월)</div>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
@@ -201,7 +205,6 @@ export default function Page() {
           </div>
         </div>
 
-        {/* 표: 월, 지역명, 값, 단위, 업데이트 날짜 */}
         <div className="mt-4 overflow-auto rounded border">
           <table className="min-w-[640px] w-full text-sm">
             <thead className="bg-gray-50">
