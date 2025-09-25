@@ -1,228 +1,264 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/app/api/kosis/import/route.ts
-import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
-import { fetchKosisData, normalizeKosisRows } from '@/lib/kosis'
-import type { KosisParamDataParams } from '@/lib/kosis'
+import { NextResponse, type NextRequest } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-export const dynamic = 'force-dynamic'
-
-// 지원 데이터셋 매핑
-type DatasetKey = 'hcsi' | 'unsold' | 'unsold_after'
-const DATASET_CONF: Record<
-  DatasetKey,
-  { table: string; defaultRegionKey: 'C1' | 'C2' | 'C3' | (string & {}) }
-> = {
-  hcsi:         { table: 'kosis_hcsi',          defaultRegionKey: 'C1' }, // 시도
-  unsold:       { table: 'kosis_unsold',        defaultRegionKey: 'C2' }, // 시군구
-  unsold_after: { table: 'kosis_unsold_after',  defaultRegionKey: 'C2' }, // 공사완료후 미분양(시군구)
+function requireEnv(name: string): string {
+  const v = process.env[name]
+  if (!v) throw new Error(`Missing required environment variable: ${name}`)
+  return v
 }
-
-function parseBool(v: string | null): boolean {
-  if (!v) return false
-  return ['1', 'true', 'yes', 'y'].includes(v.toLowerCase())
-}
-
-// YYYYMM → 목록
-function ymList(start?: string | null, end?: string | null): string[] {
-  if (!start || !end) return []
-  if (!/^\d{6}$/.test(start) || !/^\d{6}$/.test(end)) return []
-  const y1 = Number(start.slice(0, 4)), m1 = Number(start.slice(4))
-  const y2 = Number(end.slice(0, 4)), m2 = Number(end.slice(4))
-  const begin = new Date(y1, m1 - 1, 1)
-  const finish = new Date(y2, m2 - 1, 1)
-  const arr: string[] = []
-  for (let d = new Date(begin); d <= finish; d.setMonth(d.getMonth() + 1)) {
-    arr.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`)
+function toNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, '').trim())
+    return Number.isFinite(n) ? n : null
   }
-  return arr
+  return null
+}
+function incMonth(yyyymm: string): string {
+  const y = Number(yyyymm.slice(0, 4))
+  const m = Number(yyyymm.slice(4))
+  const d = new Date(y, m - 1 + 1, 1)
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+function monthRange(start: string, end: string): string[] {
+  if (!/^\d{6}$/.test(start) || !/^\d{6}$/.test(end)) return []
+  const out: string[] = []
+  let cur = start
+  while (cur <= end) {
+    out.push(cur)
+    cur = incMonth(cur)
+  }
+  return out
 }
 
-// 공백/플러스 리스트 파라미터 전처리(꼬리 '+' 포함 정리)
-function sanitizeListParam(v?: string | null): string | undefined {
-  if (!v) return undefined
-  const s = v.replace(/\+/g, ' ').replace(/\s+/g, ' ').trim()
-  return s || undefined
+/** 행 단위로 C2/C1 중 존재하는 지역코드/이름을 안전하게 선택 */
+function pickRegion(r: Record<string, any>, prefer: 'C1' | 'C2'): { code: string; name: string | null } {
+  const order = prefer === 'C2' ? (['C2', 'C1'] as const) : (['C1', 'C2'] as const)
+  for (const key of order) {
+    const code = r[key]
+    const name = r[`${key}_NM`]
+    if (code != null && code !== '') {
+      return { code: String(code), name: name != null ? String(name) : null }
+    }
+  }
+  return { code: '000', name: null }
 }
 
-export async function GET(req: Request) {
+type DatasetKey = 'hcsi' | 'unsold' | 'unsold_after'
+
+const DEFAULTS = {
+  hcsi: { orgId: '390', tblId: 'DT_39002_02', prdSe: 'M', itmId: 'ALL', objL1: 'ALL', regionKey: 'C1' as const },
+  unsold: { orgId: '101', tblId: 'DT_1YL202004E', prdSe: 'M', itmId: 'ALL', objL1: 'ALL', objL2: 'ALL', regionKey: 'C2' as const },
+  unsold_after: { orgId: '116', tblId: 'DT_MLTM_5328', prdSe: 'M', regionKey: 'C2' as const },
+}
+
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url)
-
-    // 필수: dataset, orgId, tblId
-    const dataset = (searchParams.get('dataset') ?? '').trim() as DatasetKey
-    const orgId = (searchParams.get('orgId') ?? '').trim()
-    const tblId = (searchParams.get('tblId') ?? '').trim()
-
-    if (!dataset || !(dataset in DATASET_CONF)) {
-      return NextResponse.json(
-        { ok: false, error: 'Invalid dataset. Use one of: hcsi, unsold, unsold_after' },
-        { status: 400 }
-      )
-    }
-    if (!orgId || !tblId) {
-      return NextResponse.json({ ok: false, error: 'Missing orgId or tblId' }, { status: 400 })
+    // 보호 헤더
+    const need = requireEnv('NEWS_CRON_SECRET')
+    const got = req.headers.get('x-job-secret') || req.headers.get('X-Job-Secret')
+    if (got !== need) {
+      return NextResponse.json({ ok: false, status: 401, message: 'Unauthorized' }, { status: 401 })
     }
 
-    // 기간(월 단위). 동일 월도 허용
-    const startPrdDe = searchParams.get('startPrdDe')
-    const endPrdDe = searchParams.get('endPrdDe')
-    const months = ymList(startPrdDe, endPrdDe)
+    const sp = req.nextUrl.searchParams
+    const dataset = (sp.get('dataset') as DatasetKey) || 'hcsi'
+    if (!['hcsi', 'unsold', 'unsold_after'].includes(dataset)) {
+      return NextResponse.json({ ok: false, status: 400, message: 'invalid dataset' }, { status: 400 })
+    }
+
+    const def = DEFAULTS[dataset]
+    const orgId = sp.get('orgId') || def.orgId
+    const tblId = sp.get('tblId') || def.tblId
+    const prdSe = sp.get('prdSe') || def.prdSe
+    const startPrdDe = sp.get('startPrdDe') || undefined
+    const endPrdDe = sp.get('endPrdDe') || startPrdDe
+    const itmId = sp.get('itmId') || (def as any).itmId || undefined
+    const objL1 = sp.get('objL1') || (def as any).objL1 || undefined
+    const objL2 = sp.get('objL2') || (def as any).objL2 || undefined
+    const objL3 = sp.get('objL3') || undefined
+    const objL4 = sp.get('objL4') || undefined
+    const regionKeyPref = (sp.get('regionKey') as 'C1' | 'C2' | null) || def.regionKey
+
+    if (!startPrdDe) {
+      return NextResponse.json({ ok: false, status: 400, message: 'startPrdDe is required (YYYYMM)' }, { status: 400 })
+    }
+
+    const months = monthRange(startPrdDe, endPrdDe || startPrdDe)
     if (months.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: 'startPrdDe/endPrdDe must be YYYYMM (same month allowed)' },
-        { status: 400 }
-      )
+      return NextResponse.json({ ok: false, status: 400, message: 'Invalid period range' }, { status: 400 })
     }
 
-    // 주기
-    const prdSeRaw = (searchParams.get('prdSe') ?? 'M').toUpperCase()
-    const prdSe = (['Y','H','Q','M','D','IR','F','S'].includes(prdSeRaw) ? prdSeRaw : 'M') as KosisParamDataParams['prdSe']
+    const supabase = createClient(requireEnv('NEXT_PUBLIC_SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'))
 
-    // regionKey (정규화용)
-    const explicitRegionKey = searchParams.get('regionKey') ?? undefined
-    const regionKey = (explicitRegionKey || DATASET_CONF[dataset].defaultRegionKey) as 'C1' | 'C2' | 'C3' | string
+    const attempts: Array<
+      { scope: string; ok: true; count: number; usedParams: Record<string, string> } |
+      { scope: string; ok: false; error: string; usedParams: Record<string, string> }
+    > = []
 
-    const dryRun = parseBool(searchParams.get('dryRun'))
+    let totalInserted = 0
+    let totalUpserted = 0
+    let totalSkipped = 0
 
-    // ========== 파라미터 수집 ==========
-    // 공통적으로 사용자가 직접 넘긴 값은 그대로 통과
-    const userItmId = sanitizeListParam(searchParams.get('itmId'))
-    const userObjL   = sanitizeListParam(searchParams.get('objL'))
-    const userObjL1  = sanitizeListParam(searchParams.get('objL1'))
-    const userObjL2  = sanitizeListParam(searchParams.get('objL2'))
-    const userObjL3  = sanitizeListParam(searchParams.get('objL3'))
-    const userObjL4  = sanitizeListParam(searchParams.get('objL4'))
-    const userObjL5  = sanitizeListParam(searchParams.get('objL5'))
-    const userObjL6  = sanitizeListParam(searchParams.get('objL6'))
-    const userObjL7  = sanitizeListParam(searchParams.get('objL7'))
-    const userObjL8  = sanitizeListParam(searchParams.get('objL8'))
-    const newEstPrdCnt = sanitizeListParam(searchParams.get('newEstPrdCnt'))
+    // 월별 호출 (하나라도 없어도 전체는 계속 진행)
+    for (const scope of months) {
+      const q = new URLSearchParams()
+      q.set('method', 'getList')
+      q.set('apiKey', requireEnv('KOSIS_API_KEY'))
+      q.set('format', 'json')
+      q.set('jsonVD', 'Y')
+      q.set('orgId', orgId)
+      q.set('tblId', tblId)
+      if (prdSe) q.set('prdSe', prdSe)
+      q.set('startPrdDe', scope)
+      q.set('endPrdDe', scope)
+      if (itmId) q.set('itmId', itmId)
+      if (objL1) q.set('objL1', objL1)
+      if (objL2) q.set('objL2', objL2)
+      if (objL3) q.set('objL3', objL3)
+      if (objL4) q.set('objL4', objL4)
 
-    // 데이터셋별 기본값
-    const defaultsFor: Partial<Record<DatasetKey, Partial<KosisParamDataParams>>> = {
-      hcsi: {
-        itmId: userItmId ?? 'ALL',
-        objL1: userObjL1 ?? 'ALL',
-        objL2: userObjL2 ?? undefined,
-        objL3: userObjL3 ?? undefined,
-      },
-      unsold: {
-        itmId: userItmId ?? 'ALL',
-        objL1: userObjL1 ?? 'ALL',
-        objL2: userObjL2 ?? 'ALL',
-        objL3: userObjL3 ?? undefined,
-      },
-      unsold_after: {
-        itmId: userItmId ?? '13103871088T1',
-        objL1: userObjL1 ?? '13102871088A.0001', // 전국
-        objL2: userObjL2 ?? '13102871088B.0001', // 민간부문
-        objL3: userObjL3 ?? '13102871088C.0001 13102871088C.0003',
-        objL4: userObjL4 ?? '13102871088D.0003',
-        objL5: userObjL5 ?? undefined,
-        objL6: userObjL6 ?? undefined,
-        objL7: userObjL7 ?? undefined,
-        objL8: userObjL8 ?? undefined,
-      },
-    }
+      const usedParams = Object.fromEntries(q.entries())
+      const url = `https://kosis.kr/openapi/Param/statisticsParameterData.do?${q.toString()}`
 
-    const baseDefaults = defaultsFor[dataset] ?? {}
-
-    const attempts: Array<{ scope: string; ok: boolean; error?: string; count?: number; usedParams?: Partial<KosisParamDataParams> }> = []
-    const allRows: unknown[] = []
-
-    // 월별 호출
-    for (const ym of months) {
-      const params: KosisParamDataParams = {
-        orgId,
-        tblId,
-        prdSe,
-        startPrdDe: ym,
-        endPrdDe: ym,
-        // 우선순위: 사용자 입력 > 데이터셋 기본
-        itmId: userItmId ?? baseDefaults.itmId,
-        objL:  userObjL  ?? baseDefaults.objL,
-        objL1: userObjL1 ?? baseDefaults.objL1,
-        objL2: userObjL2 ?? baseDefaults.objL2,
-        objL3: userObjL3 ?? baseDefaults.objL3,
-        objL4: userObjL4 ?? baseDefaults.objL4,
-        objL5: userObjL5 ?? baseDefaults.objL5,
-        objL6: userObjL6 ?? baseDefaults.objL6,
-        objL7: userObjL7 ?? baseDefaults.objL7,
-        objL8: userObjL8 ?? baseDefaults.objL8,
-        newEstPrdCnt: newEstPrdCnt,
-        format: 'json',
-      }
-
+      // KOSIS 호출
+      let bodyText = ''
+      let arr: any[] = []
       try {
-        const rows = await fetchKosisData(params)
-        const count = Array.isArray(rows) ? rows.length : 0
-        allRows.push(...(rows ?? []))
-        attempts.push({ scope: ym, ok: true, count, usedParams: { ...params } })
+        const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' })
+        bodyText = await res.text()
+
+        // 일부 케이스는 200이면서 본문에 에러 코드가 포함됨
+        let parsed: unknown
+        try { parsed = JSON.parse(bodyText) } catch { parsed = null }
+
+        if (!res.ok) {
+          const msg = `HTTP ${res.status}`
+          attempts.push({ scope, ok: false, error: `KOSIS error: ${msg}`, usedParams })
+          continue
+        }
+
+        if (Array.isArray(parsed)) {
+          arr = parsed
+        } else if (parsed && typeof parsed === 'object' && 'errCd' in (parsed as any)) {
+          // KOSIS 오류 포맷(예: {errCd:"30", errMsg:"데이터가 존재하지 않습니다."})
+          const e = parsed as { errCd?: string; errMsg?: string }
+          const code = e.errCd ?? 'NA'
+          const msg = e.errMsg ?? 'Unknown error'
+          if (code === '30') {
+            // 요청 월에 데이터 없음 → 정상적으로 "0건" 처리
+            attempts.push({ scope, ok: true, count: 0, usedParams })
+            continue
+          }
+          attempts.push({ scope, ok: false, error: `KOSIS error ${code}: ${msg}`, usedParams })
+          continue
+        } else {
+          // 비정형 본문
+          if (bodyText.includes('데이터가 존재하지 않습니다')) {
+            attempts.push({ scope, ok: true, count: 0, usedParams })
+            continue
+          }
+          attempts.push({ scope, ok: false, error: `KOSIS response parse error`, usedParams })
+          continue
+        }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        attempts.push({ scope: ym, ok: false, error: msg, usedParams: { ...params } })
-        return NextResponse.json(
-          { ok: false, error: `월 ${ym} 호출 실패: ${msg}`, attempts },
-          { status: 502 }
-        )
+        attempts.push({ scope, ok: false, error: `KOSIS fetch failed: ${String(e)}`, usedParams })
+        continue
       }
+
+      // 맵핑
+      const mapped = arr
+        .map((r) => {
+          const { code, name } = pickRegion(r, regionKeyPref)
+          const base = {
+            org_id: r.ORG_ID ?? orgId,
+            tbl_id: r.TBL_ID ?? tblId,
+            prd_se: r.PRD_SE ?? prdSe,
+            prd_de: r.PRD_DE as string | undefined,
+            region_code: code,
+            region_name: name,
+            itm_id: (r.ITM_ID ?? itmId ?? 'ALL') as string,
+            itm_name: (r.ITM_NM ?? null) as string | null,
+            unit: (r.UNIT_NM ?? null) as string | null,
+            value: toNumber(r.DT),
+          }
+          if (dataset === 'unsold_after') {
+            return {
+              ...base,
+              inserted_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }
+          }
+          return { ...base, raw: r }
+        })
+        .filter((r) => r.prd_de && typeof r.prd_de === 'string')
+
+      // 월별 DB 저장
+      if (dataset === 'unsold_after') {
+        const { error } = await supabase.from('kosis_unsold_after').upsert(mapped as any[], {
+          onConflict: 'tbl_id,itm_id,region_code,prd_de,org_id',
+          ignoreDuplicates: false,
+        })
+        if (error) {
+          attempts.push({ scope, ok: false, error: `upsert failed: ${(error as any).message ?? 'unknown'}`, usedParams })
+          continue
+        }
+        attempts.push({ scope, ok: true, count: (mapped as any[]).length, usedParams })
+        totalUpserted += (mapped as any[]).length
+        continue
+      }
+
+      const table = dataset === 'hcsi' ? 'kosis_hcsi' : 'kosis_unsold'
+      const keyFields = ['org_id', 'tbl_id', 'prd_se', 'prd_de', 'region_code', 'itm_id'] as const
+      const prdSet = Array.from(new Set((mapped as any[]).map((r) => r.prd_de)))
+      const { data: existing, error: exErr } = await supabase
+        .from(table)
+        .select(keyFields.join(','))
+        .in('prd_de', prdSet)
+        .eq('org_id', orgId)
+        .eq('tbl_id', tblId)
+
+      if (exErr) {
+        attempts.push({ scope, ok: false, error: `select failed: ${(exErr as any).message ?? 'unknown'}`, usedParams })
+        continue
+      }
+
+      const existSet = new Set((existing ?? []).map((e: any) => keyFields.map((k) => e[k]).join('|')))
+      const toInsert = (mapped as any[]).filter((r) => !existSet.has(keyFields.map((k) => r[k]).join('|')))
+
+      if (toInsert.length > 0) {
+        const { error: insErr } = await supabase.from(table).insert(toInsert)
+        if (insErr) {
+          attempts.push({ scope, ok: false, error: `insert failed: ${(insErr as any).message ?? 'unknown'}`, usedParams })
+          continue
+        }
+      }
+
+      attempts.push({ scope, ok: true, count: (mapped as any[]).length, usedParams })
+      totalInserted += toInsert.length
+      totalSkipped += (mapped as any[]).length - toInsert.length
     }
 
-    // 정규화
-    const normalized = normalizeKosisRows(allRows as any[], {
-      orgId,
-      tblId,
-      regionKey,
-    })
+    // 전체 결과 집계 (부분 성공 허용)
+    const anySuccess = attempts.some((a) => a.ok && a.count >= 0)
+    const allZero = attempts.every((a) => a.ok && 'count' in a && a.count === 0)
 
-    if (dryRun) {
-      return NextResponse.json({
-        ok: true,
-        mode: 'dryRun',
-        months: months.length,
-        totalRows: normalized.length,
-        attempts,
-        preview: normalized.slice(0, 5),
-      })
+    if (!anySuccess) {
+      // 전부 실패한 경우만 실패 처리
+      return NextResponse.json({ ok: false, status: 502, message: 'All attempts failed', attempts }, { status: 502 })
     }
 
-    // DB 업서트
-    const table = DATASET_CONF[dataset].table
-    const rowsToInsert = normalized.map((r) => ({
-      org_id: r.org_id,
-      tbl_id: r.tbl_id,
-      prd_se: r.prd_se,
-      prd_de: r.prd_de,
-      region_code: r.region_code,
-      region_name: r.region_name,
-      itm_id: r.itm_id,
-      itm_name: r.itm_name,
-      unit: r.unit,
-      value: r.value,
-    }))
-
-    const { error: upErr, count } = await supabaseAdmin
-      .from(table)
-      .upsert(rowsToInsert, {
-        onConflict: 'org_id,tbl_id,prd_de,region_code,itm_id',
-        ignoreDuplicates: false,
-        count: 'exact',
-      })
-
-    if (upErr) {
-      return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 })
-    }
-
+    // 부분 성공 → 200 OK로 성공 처리
     return NextResponse.json({
       ok: true,
-      inserted: count ?? rowsToInsert.length,
-      table,
-      months: months.length,
+      status: 200,
+      inserted: totalInserted,
+      upserted: totalUpserted,
+      skipped: totalSkipped,
       attempts,
     })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+    return NextResponse.json({ ok: false, status: 500, message: String(e) }, { status: 500 })
   }
 }

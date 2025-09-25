@@ -1,3 +1,5 @@
+//src\app\data\rone-vacancy\RoneVacancyClient.tsx
+
 'use client'
 
 import Link from 'next/link'
