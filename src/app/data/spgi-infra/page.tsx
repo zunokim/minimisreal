@@ -3,6 +3,7 @@
 
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
+import type { ReactElement } from 'react'
 
 type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string>; httpStatus?: number; url?: string }
@@ -21,14 +22,17 @@ type Row = {
   updated_at: string | null
 }
 
+/** 이번 달 1일 ~ 이번 달 말일 */
 function defaultDateRange(): { start: string; end: string } {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = d.getMonth() + 1
-  if (m === 1) return { start: `${y - 1}-01-01`, end: `${y - 1}-12-31` }
-  const prev = new Date(Date.UTC(y, m - 2, 1))
-  const end = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}-01`
-  return { start: `${y}-01-01`, end }
+  const now = new Date()
+  const y = now.getUTCFullYear()
+  const m = now.getUTCMonth() + 1 // 1..12
+  const mm = String(m).padStart(2, '0')
+  const first = `${y}-${mm}-01`
+  // UTC 기준 이번 달 마지막 날짜
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const end = `${y}-${mm}-${String(lastDay).padStart(2, '0')}`
+  return { start: first, end }
 }
 function fmtUpdated(s: string | null): string { return s ? s.slice(0, 16) : '' }
 function fmtNum(n: number): string { return Number.isFinite(n) ? n.toLocaleString() : String(n) }
@@ -42,7 +46,7 @@ function summarizeAttempts(attempts?: Attempt[]) {
   return { success: success.length, fail: fail.length, last }
 }
 
-export default function Page(): JSX.Element {
+export default function Page(): ReactElement {
   // 수집 (시트 CSV)
   const def = useMemo(defaultDateRange, [])
   const [ingStart, setIngStart] = useState(def.start)
