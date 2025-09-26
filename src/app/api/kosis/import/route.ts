@@ -31,6 +31,14 @@ function monthRange(start: string, end: string): string[] {
   return out
 }
 
+/** Dev/로컬에서만 헤더 없이 접근 허용 */
+function isDevBypass(req: NextRequest): boolean {
+  const isDev = process.env.NODE_ENV !== 'production'
+  const host = req.headers.get('host') ?? ''
+  const fromLocal = /^localhost(:\d+)?$/.test(host) || /^127\.0\.0\.1(:\d+)?$/.test(host)
+  return isDev && fromLocal
+}
+
 /** KOSIS 표준 응답(실데이터) 형태 */
 interface KosisRow {
   ORG_ID?: string
@@ -57,13 +65,39 @@ interface KosisErrorBody {
 
 type DatasetKey = 'hcsi' | 'unsold' | 'unsold_after'
 
+/** 기본 파라미터 */
 const DEFAULTS = {
-  hcsi: { orgId: '390', tblId: 'DT_39002_02', prdSe: 'M', itmId: 'ALL', objL1: 'ALL', regionKey: 'C1' as const },
-  unsold: { orgId: '101', tblId: 'DT_1YL202004E', prdSe: 'M', itmId: 'ALL', objL1: 'ALL', objL2: 'ALL', regionKey: 'C2' as const },
-  unsold_after: { orgId: '116', tblId: 'DT_MLTM_5328', prdSe: 'M', regionKey: 'C2' as const },
-}
+  hcsi: {
+    orgId: '390',
+    tblId: 'DT_39002_02',
+    prdSe: 'M',
+    itmId: 'ALL',
+    objL1: 'ALL',
+    regionKey: 'C1' as const,
+  },
+  unsold: {
+    orgId: '101',
+    tblId: 'DT_1YL202004E',
+    prdSe: 'M',
+    itmId: 'ALL',
+    objL1: 'ALL',
+    objL2: 'ALL',
+    regionKey: 'C2' as const,
+  },
+  unsold_after: {
+    orgId: '116',
+    tblId: 'DT_MLTM_5328',
+    prdSe: 'M',
+    regionKey: 'C2' as const,
+    // 성공 사례에서 확인된 필수 계층 파라미터
+    itmId: '13103871088T1',
+    objL1: '13102871088A.0001',
+    objL2: '13102871088B.0001',
+    objL3: '13102871088C.0001 13102871088C.0003',
+    objL4: '13102871088D.0003',
+  },
+} as const
 
-/** 행 단위로 C2/C1 중 존재하는 지역코드/이름을 안전하게 선택 */
 function pickRegion(r: KosisRow, prefer: 'C1' | 'C2'): { code: string; name: string | null } {
   const order = prefer === 'C2' ? (['C2', 'C1'] as const) : (['C1', 'C2'] as const)
   for (const key of order) {
@@ -76,7 +110,6 @@ function pickRegion(r: KosisRow, prefer: 'C1' | 'C2'): { code: string; name: str
   return { code: '000', name: null }
 }
 
-/** Supabase 공통 Row(맵핑 후) */
 interface CommonDbRow {
   org_id: string
   tbl_id: string
@@ -89,31 +122,47 @@ interface CommonDbRow {
   unit: string | null
   value: number | null
 }
-
-/** kosis_unsold_after용 Row (upsert) */
 interface UnsoldAfterDbRow extends CommonDbRow {
   inserted_at: string
   updated_at: string
 }
-
-/** hcsi/unsold용 Row (insert dedupe) */
 interface NormalDbRow extends CommonDbRow {
   raw: KosisRow
 }
-
-/** 기존 키 조회용 타입 */
-type ExistingKeyRow = Pick<CommonDbRow, 'org_id' | 'tbl_id' | 'prd_se' | 'prd_de' | 'region_code' | 'itm_id'>
 
 type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
 type Attempt = AttemptOk | AttemptFail
 
+/** 고유키 문자열 */
+function keyOf(r: Pick<CommonDbRow, 'org_id' | 'tbl_id' | 'prd_de' | 'region_code' | 'itm_id'>): string {
+  return `${r.org_id}|${r.tbl_id}|${r.prd_de}|${r.region_code}|${r.itm_id}`
+}
+
+/** 동일 키가 한 번의 배치에 중복 들어오지 않도록 정리 */
+function dedupeRows(rows: CommonDbRow[]): CommonDbRow[] {
+  const m = new Map<string, CommonDbRow>()
+  for (const r of rows) {
+    m.set(keyOf(r), r) // 마지막 값이 남도록 덮어쓰기
+  }
+  return Array.from(m.values())
+}
+
+/** 배열을 청크로 나누기 */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 export async function GET(req: NextRequest) {
   try {
-    // 보호 헤더
+    // ── 인증 ──
     const need = requireEnv('NEWS_CRON_SECRET')
-    const got = req.headers.get('x-job-secret') || req.headers.get('X-Job-Secret')
-    if (got !== need) {
+    const gotHeader = req.headers.get('x-job-secret') || req.headers.get('X-Job-Secret')
+    const gotQuery = req.nextUrl.searchParams.get('secret')
+    const allow = isDevBypass(req) || gotHeader === need || (gotQuery && gotQuery === need)
+    if (!allow) {
       return NextResponse.json({ ok: false, status: 401, message: 'Unauthorized' }, { status: 401 })
     }
 
@@ -132,8 +181,8 @@ export async function GET(req: NextRequest) {
     const itmId = sp.get('itmId') || (def as { itmId?: string }).itmId || undefined
     const objL1 = sp.get('objL1') || (def as { objL1?: string }).objL1 || undefined
     const objL2 = sp.get('objL2') || (def as { objL2?: string }).objL2 || undefined
-    const objL3 = sp.get('objL3') || undefined
-    const objL4 = sp.get('objL4') || undefined
+    const objL3 = sp.get('objL3') || (def as { objL3?: string }).objL3 || undefined
+    const objL4 = sp.get('objL4') || (def as { objL4?: string }).objL4 || undefined
     const regionKeyPref = (sp.get('regionKey') as 'C1' | 'C2' | null) || def.regionKey
 
     if (!startPrdDe) {
@@ -148,9 +197,7 @@ export async function GET(req: NextRequest) {
     const supabase = createClient(requireEnv('NEXT_PUBLIC_SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'))
 
     const attempts: Attempt[] = []
-    let totalInserted = 0
     let totalUpserted = 0
-    let totalSkipped = 0
 
     for (const scope of months) {
       const q = new URLSearchParams()
@@ -195,6 +242,7 @@ export async function GET(req: NextRequest) {
           if (e.errCd) {
             const code = e.errCd
             const msg = e.errMsg ?? 'Unknown error'
+            // 데이터 없음은 성공(0건)으로 처리
             if (code === '30' || /데이터가 존재하지 않습니다/.test(msg)) {
               attempts.push({ scope, ok: true, count: 0, usedParams })
               continue
@@ -218,7 +266,7 @@ export async function GET(req: NextRequest) {
       }
 
       // ===== 맵핑 =====
-      const mappedCommon: CommonDbRow[] = arr
+      const mappedCommonRaw: CommonDbRow[] = arr
         .map((r): CommonDbRow | null => {
           const { code, name } = pickRegion(r, regionKeyPref)
           const prd_de = typeof r.PRD_DE === 'string' ? r.PRD_DE : undefined
@@ -230,6 +278,7 @@ export async function GET(req: NextRequest) {
             prd_de,
             region_code: code,
             region_name: name,
+            // ❗ ITM_ID가 응답에 없을 수도 있으므로, 그때만 기본값('ALL') 사용
             itm_id: r.ITM_ID ?? (itmId ?? 'ALL'),
             itm_name: r.ITM_NM ?? null,
             unit: r.UNIT_NM ?? null,
@@ -237,6 +286,9 @@ export async function GET(req: NextRequest) {
           }
         })
         .filter((v): v is CommonDbRow => v !== null)
+
+      // ✅ upsert 전에 동일 키 중복 제거 (한 배치 내 중복으로 인한 "second time" 에러 차단)
+      const mappedCommon = dedupeRows(mappedCommonRaw)
 
       // ===== DB 저장(월별) =====
       if (dataset === 'unsold_after') {
@@ -264,68 +316,42 @@ export async function GET(req: NextRequest) {
         continue
       }
 
+      // ✅ hcsi/unsold도 upsert + 배치
       const table = dataset === 'hcsi' ? 'kosis_hcsi' : 'kosis_unsold'
-      const keyFields = ['org_id', 'tbl_id', 'prd_se', 'prd_de', 'region_code', 'itm_id'] as const
+      const rows: NormalDbRow[] = mappedCommon.map((b) => ({ ...b, raw: {} }))
 
-      const prdSet = Array.from(new Set(mappedCommon.map((r) => r.prd_de)))
-      const { data: existing, error: exErr } = await supabase
-        .from(table)
-        .select('org_id,tbl_id,prd_se,prd_de,region_code,itm_id')
-        .in('prd_de', prdSet)
-        .eq('org_id', orgId)
-        .eq('tbl_id', tblId)
-        .returns<ExistingKeyRow[]>()
+      const batches = chunk(rows, 500)
+      let okCount = 0
+      let batchError: string | null = null
 
-      if (exErr) {
-        attempts.push({
-          scope,
-          ok: false,
-          error: `select failed: ${String((exErr as { message?: string }).message ?? exErr)}`,
-          usedParams,
+      for (const batch of batches) {
+        const { error: upErr } = await supabase.from(table).upsert(batch, {
+          onConflict: 'org_id,tbl_id,prd_de,region_code,itm_id',
+          ignoreDuplicates: false,
         })
+        if (upErr) {
+          batchError = String((upErr as { message?: string }).message ?? upErr)
+          break
+        }
+        okCount += batch.length
+      }
+
+      if (batchError) {
+        attempts.push({ scope, ok: false, error: `upsert failed: ${batchError}`, usedParams })
         continue
       }
 
-      const existingRows: ExistingKeyRow[] = existing ?? []
-      const existSet = new Set(existingRows.map((e) => keyFields.map((k) => e[k]).join('|')))
-
-      const toInsert: NormalDbRow[] = mappedCommon
-        .filter((r) => !existSet.has(keyFields.map((k) => r[k]).join('|')))
-        .map((r) => {
-          const raw: KosisRow = {} // 진단 필요 시 확장 가능
-          return { ...r, raw }
-        })
-
-      if (toInsert.length > 0) {
-        const { error: insErr } = await supabase.from(table).insert(toInsert)
-        if (insErr) {
-          attempts.push({
-            scope,
-            ok: false,
-            error: `insert failed: ${String((insErr as { message?: string }).message ?? insErr)}`,
-            usedParams,
-          })
-          continue
-        }
-      }
-
-      attempts.push({ scope, ok: true, count: mappedCommon.length, usedParams })
-      totalInserted += toInsert.length
-      totalSkipped += mappedCommon.length - toInsert.length
+      attempts.push({ scope, ok: true, count: okCount, usedParams })
+      totalUpserted += okCount
     }
 
-    const anySuccess = attempts.some((a) => a.ok && a.count >= 0)
-    if (!anySuccess) {
-      return NextResponse.json({ ok: false, status: 502, message: 'All attempts failed', attempts }, { status: 502 })
-    }
-
+    const successCount = attempts.filter((a) => a.ok).length
     return NextResponse.json({
-      ok: true,
+      ok: successCount > 0,
       status: 200,
-      inserted: totalInserted,
       upserted: totalUpserted,
-      skipped: totalSkipped,
       attempts,
+      message: successCount > 0 ? 'completed with partial successes' : 'all attempts failed',
     })
   } catch (e) {
     return NextResponse.json({ ok: false, status: 500, message: String(e) }, { status: 500 })

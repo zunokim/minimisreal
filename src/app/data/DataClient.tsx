@@ -122,6 +122,20 @@ export default function DataClient() {
             자세히 보기<span aria-hidden>→</span>
           </div>
         </Link>
+
+        {/* ── S&P DJI: S&P Global Infrastructure Index (비공식, MIS) ── */}
+        <Link
+          href="/data/spgi-infra"
+          className="relative text-left rounded-2xl border bg-white p-5 shadow-sm hover:shadow-md active:scale-[0.99] transition"
+        >
+          <CornerBadge type="MIS" />
+          <div className="text-sm text-gray-500">S&P DJI</div>
+          <div className="text-xl font-semibold mt-1">S&amp;P Global Infrastructure Index (비공식)</div>
+          <div className="text-sm text-gray-600 mt-1">Google Sheets CSV · 수집/DB조회</div>
+          <div className="mt-3 inline-flex items-center gap-2 text-blue-600 font-medium">
+            자세히 보기<span aria-hidden>→</span>
+          </div>
+        </Link>
       </div>
     </div>
   )

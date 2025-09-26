@@ -8,7 +8,7 @@ type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<st
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
 type Attempt = AttemptOk | AttemptFail
 
-type ApiOk<T> = { ok: true; status: number; data?: T; inserted?: number; skipped?: number; attempts?: Attempt[] }
+type ApiOk<T> = { ok: true; status: number; data?: T; attempts?: Attempt[] }
 type ApiErr = { ok: false; status: number; message: string; details?: unknown }
 type ApiResp<T> = ApiOk<T> | ApiErr
 
@@ -20,6 +20,7 @@ type Row = {
   itm_name: string | null
   unit: string | null
   value: number | null
+  updated_at: string | null
 }
 
 function defaultYmRange(): { start: string; end: string } {
@@ -32,11 +33,18 @@ function defaultYmRange(): { start: string; end: string } {
 }
 function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleString() }
 function yyyymmToLabel(ym: string): string { return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym }
-
-/** 타입 가드 */
-function isAttemptOk(a: Attempt): a is AttemptOk {
-  return a.ok === true && 'count' in a
+function fmtYmdHm(s: string | null): string {
+  if (!s) return ''
+  const d = new Date(s)
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const da = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${mo}-${da} ${hh}:${mi}`
 }
+/** 타입 가드 */
+function isAttemptOk(a: Attempt): a is AttemptOk { return a.ok === true && 'count' in a }
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
   const success = attempts.filter(isAttemptOk)
@@ -56,8 +64,6 @@ export default function Page() {
   const def = useMemo(defaultYmRange, [])
   const [ingStart, setIngStart] = useState(def.start)
   const [ingEnd, setIngEnd] = useState(def.end)
-  const [ingSido, setIngSido] = useState('ALL')
-  const [ingSigungu, setIngSigungu] = useState('ALL')
   const [ingLoading, setIngLoading] = useState(false)
   const [ingMsg, setIngMsg] = useState('')
   const [attempts, setAttempts] = useState<Attempt[] | undefined>(undefined)
@@ -65,8 +71,7 @@ export default function Page() {
   // 조회
   const [start, setStart] = useState(def.start)
   const [end, setEnd] = useState(def.end)
-  const [sido, setSido] = useState('')
-  const [sigungu, setSigungu] = useState('')
+  const [regionName, setRegionName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,10 +80,9 @@ export default function Page() {
     const p = new URLSearchParams()
     p.set('start', start)
     p.set('end', end)
-    if (sido) p.set('sido', sido)
-    if (sigungu) p.set('sigungu', sigungu)
+    if (regionName.trim()) p.set('regionName', regionName.trim())
     return `/api/kosis/unsold/list?${p.toString()}`
-  }, [start, end, sido, sigungu])
+  }, [start, end, regionName])
 
   const ingest = async (): Promise<void> => {
     setIngLoading(true)
@@ -88,12 +92,7 @@ export default function Page() {
       const res = await fetch('/api/kosis/ingest/unsold', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          start: ingStart,
-          end: ingEnd,
-          sido: ingSido !== 'ALL' ? ingSido : undefined,
-          sigungu: ingSigungu !== 'ALL' ? ingSigungu : undefined,
-        }),
+        body: JSON.stringify({ start: ingStart, end: ingEnd }),
       })
       const text = await res.text()
       let data: ApiResp<unknown>
@@ -148,7 +147,7 @@ export default function Page() {
           <div className="font-semibold whitespace-nowrap">API 수집 (기간: 월)</div>
           <div className="text-xs text-gray-500 whitespace-nowrap">DB 테이블: kosis_unsold</div>
         </div>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-8 gap-3 items-end">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
           <label className="text-sm">
             <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
             <input value={ingStart} onChange={(e) => setIngStart(e.target.value)} className="w-full rounded-md border px-3 py-2" />
@@ -156,14 +155,6 @@ export default function Page() {
           <label className="text-sm">
             <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
             <input value={ingEnd} onChange={(e) => setIngEnd(e.target.value)} className="w-full rounded-md border px-3 py-2" />
-          </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">시도코드(옵션)</div>
-            <input value={ingSido} onChange={(e) => setIngSido(e.target.value)} className="w-full rounded-md border px-3 py-2" />
-          </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">시군구코드(옵션)</div>
-            <input value={ingSigungu} onChange={(e) => setIngSigungu(e.target.value)} className="w-full rounded-md border px-3 py-2" />
           </label>
           <div className="flex gap-2 sm:col-span-4">
             <button onClick={ingest} disabled={ingLoading} className="inline-flex items-center justify-center min-w-[96px] rounded-md bg-black text-white px-4 py-2.5 disabled:opacity-50">
@@ -185,7 +176,7 @@ export default function Page() {
 
       {/* DB 조회 */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월)</div>
+        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월 · 지역명 검색)</div>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-8 gap-3 items-end">
           <label className="text-sm">
             <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
@@ -195,15 +186,11 @@ export default function Page() {
             <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
             <input value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded-md border px-3 py-2" />
           </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">시도코드(옵션)</div>
-            <input value={sido} onChange={(e) => setSido(e.target.value)} className="w-full rounded-md border px-3 py-2" />
+          <label className="text-sm sm:col-span-3">
+            <div className="text-gray-600 mb-1">지역명(부분검색)</div>
+            <input value={regionName} onChange={(e) => setRegionName(e.target.value)} placeholder="예: 서울, 수원, 해운대…" className="w-full rounded-md border px-3 py-2" />
           </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">시군구코드(옵션)</div>
-            <input value={sigungu} onChange={(e) => setSigungu(e.target.value)} className="w-full rounded-md border px-3 py-2" />
-          </label>
-          <div className="flex gap-2 sm:col-span-4">
+          <div className="flex gap-2 sm:col-span-2">
             <button onClick={fetchList} disabled={loading} className="inline-flex items-center justify-center min-w-[96px] rounded-md border px-4 py-2.5">
               {loading ? '조회 중…' : '조회'}
             </button>
@@ -211,21 +198,22 @@ export default function Page() {
         </div>
 
         <div className="mt-4 overflow-auto rounded border">
-          <table className="min-w-[720px] w-full text-sm">
+          <table className="min-w-[980px] w-full text-sm">
             <thead className="bg-gray-50">
-              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
+              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold whitespace-nowrap">
                 <th>월</th>
                 <th>지역명</th>
                 <th>항목</th>
                 <th className="text-right">값</th>
                 <th>단위</th>
+                <th>업데이트</th>
               </tr>
             </thead>
             <tbody>
               {error ? (
-                <tr><td className="px-3 py-6 text-red-600" colSpan={5}>{error}</td></tr>
+                <tr><td className="px-3 py-6 text-red-600" colSpan={6}>{error}</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td className="px-3 py-6 text-gray-500" colSpan={5}>조회 결과가 없습니다.</td></tr>
+                <tr><td className="px-3 py-6 text-gray-500" colSpan={6}>조회 결과가 없습니다.</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={`${r.prd_de}-${r.region_code}-${r.itm_id}`} className="odd:bg-white even:bg-gray-50">
@@ -234,6 +222,7 @@ export default function Page() {
                     <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
                     <td className="px-3 py-2 text-right">{fmtNum(r.value)}</td>
                     <td className="px-3 py-2">{r.unit ?? ''}</td>
+                    <td className="px-3 py-2">{fmtYmdHm(r.updated_at)}</td>
                   </tr>
                 ))
               )}
@@ -244,3 +233,4 @@ export default function Page() {
     </div>
   )
 }
+

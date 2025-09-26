@@ -8,16 +8,17 @@ type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<st
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
 type Attempt = AttemptOk | AttemptFail
 
-type ApiOk<T> = { ok: true; status: number; data?: T; upserted?: number; attempts?: Attempt[] }
-type ApiErr = { ok: false; status: number; message: string; details?: unknown }
+type ApiOk<T> = { ok: true; status: number; data?: T; attempts?: Attempt[] }
+type ApiErr = { ok: false; status: number; message: string }
 type ApiResp<T> = ApiOk<T> | ApiErr
 
 type Row = {
   prd_se: string
   prd_de: string
+  region_code: string
   region_name: string | null
-  value: number | null
   unit: string | null
+  value: number | null
   updated_at: string | null
 }
 
@@ -29,13 +30,20 @@ function defaultYmRange(): { start: string; end: string } {
   const prev = new Date(y, m - 2, 1)
   return { start: `${y}01`, end: `${prev.getFullYear()}${String(prev.getMonth() + 1).padStart(2, '0')}` }
 }
-function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleString() }
 function yyyymmToLabel(ym: string): string { return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym }
-
-/** 타입 가드 */
-function isAttemptOk(a: Attempt): a is AttemptOk {
-  return a.ok === true && 'count' in a
+function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleString() }
+function fmtYmdHm(s: string | null): string {
+  if (!s) return ''
+  const d = new Date(s)
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const da = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${mo}-${da} ${hh}:${mi}`
 }
+/** 타입 가드 */
+function isAttemptOk(a: Attempt): a is AttemptOk { return a.ok === true && 'count' in a }
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
   const success = attempts.filter(isAttemptOk)
@@ -50,32 +58,19 @@ function summarizeAttempts(attempts?: Attempt[]) {
   return { successCount: success.length, failCount: fail.length, lastSuccessMonth }
 }
 
-function fmtUpdatedAt(s: string | null): string {
-  if (!s) return '-'
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`
-}
-
 export default function Page() {
   // 수집
   const def = useMemo(defaultYmRange, [])
   const [ingStart, setIngStart] = useState(def.start)
   const [ingEnd, setIngEnd] = useState(def.end)
-  const [ingRegion, setIngRegion] = useState('')
   const [ingLoading, setIngLoading] = useState(false)
   const [ingMsg, setIngMsg] = useState('')
   const [attempts, setAttempts] = useState<Attempt[] | undefined>(undefined)
 
-  // 조회 (버튼)
+  // 조회
   const [start, setStart] = useState(def.start)
   const [end, setEnd] = useState(def.end)
-  const [region, setRegion] = useState('')
+  const [regionName, setRegionName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -84,9 +79,9 @@ export default function Page() {
     const p = new URLSearchParams()
     p.set('start', start)
     p.set('end', end)
-    if (region) p.set('region', region)
+    if (regionName.trim()) p.set('regionName', regionName.trim())
     return `/api/kosis/unsold-after/list?${p.toString()}`
-  }, [start, end, region])
+  }, [start, end, regionName])
 
   const ingest = async (): Promise<void> => {
     setIngLoading(true)
@@ -96,7 +91,7 @@ export default function Page() {
       const res = await fetch('/api/kosis/ingest/unsold-after', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ start: ingStart, end: ingEnd, region: ingRegion || undefined }),
+        body: JSON.stringify({ start: ingStart, end: ingEnd }),
       })
       const text = await res.text()
       let data: ApiResp<unknown>
@@ -120,7 +115,7 @@ export default function Page() {
       const res = await fetch(listUrl)
       const text = await res.text()
       let data: ApiResp<Row[]>
-      try { data = JSON.parse(text) } catch { data = { ok: false, status: res.status, message: text } }
+      try { data = JSON.parse(text) } catch { data = { ok: false, status: res.status, message: text } as ApiErr }
       if (!res.ok || !data.ok) throw new Error(('message' in data && data.message) || `HTTP ${res.status}`)
       setRows((data as ApiOk<Row[]>).data ?? [])
     } catch (e) {
@@ -151,7 +146,7 @@ export default function Page() {
           <div className="font-semibold whitespace-nowrap">API 수집 (기간: 월)</div>
           <div className="text-xs text-gray-500 whitespace-nowrap">DB 테이블: kosis_unsold_after</div>
         </div>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
           <label className="text-sm">
             <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
             <input value={ingStart} onChange={(e) => setIngStart(e.target.value)} className="w-full rounded-md border px-3 py-2" />
@@ -159,10 +154,6 @@ export default function Page() {
           <label className="text-sm">
             <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
             <input value={ingEnd} onChange={(e) => setIngEnd(e.target.value)} className="w-full rounded-md border px-3 py-2" />
-          </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">지역코드(옵션)</div>
-            <input value={ingRegion} onChange={(e) => setIngRegion(e.target.value)} className="w-full rounded-md border px-3 py-2" />
           </label>
           <div className="flex gap-2 sm:col-span-4">
             <button onClick={ingest} disabled={ingLoading} className="inline-flex items-center justify-center min-w-[96px] rounded-md bg-black text-white px-4 py-2.5 disabled:opacity-50">
@@ -182,9 +173,9 @@ export default function Page() {
         </div>
       </div>
 
-      {/* DB 조회 (월, 지역명, 값, 단위, 업데이트 날짜) */}
+      {/* DB 조회 */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월)</div>
+        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월 · 지역명 검색)</div>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
           <label className="text-sm">
             <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
@@ -194,11 +185,11 @@ export default function Page() {
             <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
             <input value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded-md border px-3 py-2" />
           </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">지역코드(옵션)</div>
-            <input value={region} onChange={(e) => setRegion(e.target.value)} className="w-full rounded-md border px-3 py-2" />
+          <label className="text-sm sm:col-span-3">
+            <div className="text-gray-600 mb-1">지역명(부분검색)</div>
+            <input value={regionName} onChange={(e) => setRegionName(e.target.value)} placeholder="예: 서울, 수원, 해운대…" className="w-full rounded-md border px-3 py-2" />
           </label>
-          <div className="flex gap-2 sm:col-span-4">
+          <div className="flex gap-2 sm:col-span-1">
             <button onClick={fetchList} disabled={loading} className="inline-flex items-center justify-center min-w-[96px] rounded-md border px-4 py-2.5">
               {loading ? '조회 중…' : '조회'}
             </button>
@@ -206,14 +197,14 @@ export default function Page() {
         </div>
 
         <div className="mt-4 overflow-auto rounded border">
-          <table className="min-w-[640px] w-full text-sm">
+          <table className="min-w-[820px] w-full text-sm">
             <thead className="bg-gray-50">
-              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
+              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold whitespace-nowrap">
                 <th>월</th>
                 <th>지역명</th>
                 <th className="text-right">값</th>
                 <th>단위</th>
-                <th>업데이트 날짜</th>
+                <th>업데이트</th>
               </tr>
             </thead>
             <tbody>
@@ -222,13 +213,13 @@ export default function Page() {
               ) : rows.length === 0 ? (
                 <tr><td className="px-3 py-6 text-gray-500" colSpan={5}>조회 결과가 없습니다.</td></tr>
               ) : (
-                rows.map((r, i) => (
-                  <tr key={`${r.prd_de}-${r.region_name}-${i}`} className="odd:bg-white even:bg-gray-50">
+                rows.map((r) => (
+                  <tr key={`${r.prd_de}-${r.region_code}`} className="odd:bg-white even:bg-gray-50">
                     <td className="px-3 py-2">{yyyymmToLabel(r.prd_de)}</td>
-                    <td className="px-3 py-2">{r.region_name ?? ''}</td>
+                    <td className="px-3 py-2">{r.region_name ?? r.region_code}</td>
                     <td className="px-3 py-2 text-right">{fmtNum(r.value)}</td>
                     <td className="px-3 py-2">{r.unit ?? ''}</td>
-                    <td className="px-3 py-2">{fmtUpdatedAt(r.updated_at)}</td>
+                    <td className="px-3 py-2">{fmtYmdHm(r.updated_at)}</td>
                   </tr>
                 ))
               )}
@@ -239,3 +230,5 @@ export default function Page() {
     </div>
   )
 }
+
+

@@ -2,14 +2,14 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 
 type AttemptOk = { scope: string; ok: true; count: number; usedParams: Record<string, string> }
 type AttemptFail = { scope: string; ok: false; error: string; usedParams: Record<string, string> }
 type Attempt = AttemptOk | AttemptFail
 
-type ApiOk<T> = { ok: true; status: number; data?: T; inserted?: number; upserted?: number; skipped?: number; attempts?: Attempt[] }
-type ApiErr = { ok: false; status: number; message: string; details?: unknown }
+type ApiOk<T> = { ok: true; status: number; data?: T; attempts?: Attempt[] }
+type ApiErr = { ok: false; status: number; message: string }
 type ApiResp<T> = ApiOk<T> | ApiErr
 
 type Row = {
@@ -20,6 +20,7 @@ type Row = {
   itm_name: string | null
   unit: string | null
   value: number | null
+  updated_at: string | null
 }
 
 function defaultYmRange(): { start: string; end: string } {
@@ -27,21 +28,23 @@ function defaultYmRange(): { start: string; end: string } {
   const y = d.getFullYear()
   const m = d.getMonth() + 1
   if (m === 1) return { start: `${y - 1}01`, end: `${y - 1}12` }
-  const prev = new Date(y, m - 2, 1)
+  const prev = new Date(y, m - 2, 1) // 전월
   return { start: `${y}01`, end: `${prev.getFullYear()}${String(prev.getMonth() + 1).padStart(2, '0')}` }
 }
-function fmtNum(n: number | null): string {
-  return n == null ? '-' : n.toLocaleString()
+function fmtNum(n: number | null): string { return n == null ? '-' : n.toLocaleString() }
+function yyyymmToLabel(ym: string): string { return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym }
+function fmtYmdHm(s: string | null): string {
+  if (!s) return ''
+  const d = new Date(s)
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const da = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${mo}-${da} ${hh}:${mi}`
 }
-function yyyymmToLabel(ym: string): string {
-  return /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : ym
-}
-
-/** 타입 가드: 성공 시도만 좁히기 */
-function isAttemptOk(a: Attempt): a is AttemptOk {
-  return a.ok === true && 'count' in a
-}
-
+/** 타입 가드 */
+function isAttemptOk(a: Attempt): a is AttemptOk { return a.ok === true && 'count' in a }
 function summarizeAttempts(attempts?: Attempt[]) {
   if (!attempts) return { successCount: 0, failCount: 0, lastSuccessMonth: '' }
   const success = attempts.filter(isAttemptOk)
@@ -65,10 +68,10 @@ export default function Page() {
   const [ingMsg, setIngMsg] = useState('')
   const [attempts, setAttempts] = useState<Attempt[] | undefined>(undefined)
 
-  // 조회(버튼)
+  // 조회
   const [start, setStart] = useState(def.start)
   const [end, setEnd] = useState(def.end)
-  const [region, setRegion] = useState('')
+  const [regionName, setRegionName] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,9 +80,9 @@ export default function Page() {
     const p = new URLSearchParams()
     p.set('start', start)
     p.set('end', end)
-    if (region) p.set('region', region)
+    if (regionName.trim()) p.set('regionName', regionName.trim())
     return `/api/kosis/hcsi/list?${p.toString()}`
-  }, [start, end, region])
+  }, [start, end, regionName])
 
   const ingest = async (): Promise<void> => {
     setIngLoading(true)
@@ -123,7 +126,6 @@ export default function Page() {
     }
   }
 
-  // 초기 1회 조회
   useEffect(() => { void fetchList() /* eslint-disable-line react-hooks/exhaustive-deps */ }, [])
 
   const attemptSummary = summarizeAttempts(attempts)
@@ -174,8 +176,8 @@ export default function Page() {
 
       {/* DB 조회 */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월)</div>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
+        <div className="font-semibold whitespace-nowrap">DB 조회 (기간: 월 · 지역명 검색)</div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-7 gap-3 items-end">
           <label className="text-sm">
             <div className="text-gray-600 mb-1">시작(YYYYMM)</div>
             <input value={start} onChange={(e) => setStart(e.target.value)} className="w-full rounded-md border px-3 py-2" />
@@ -184,11 +186,11 @@ export default function Page() {
             <div className="text-gray-600 mb-1">끝(YYYYMM)</div>
             <input value={end} onChange={(e) => setEnd(e.target.value)} className="w-full rounded-md border px-3 py-2" />
           </label>
-          <label className="text-sm">
-            <div className="text-gray-600 mb-1">지역코드(옵션)</div>
-            <input value={region} onChange={(e) => setRegion(e.target.value)} className="w-full rounded-md border px-3 py-2" />
+          <label className="text-sm sm:col-span-3">
+            <div className="text-gray-600 mb-1">지역명(부분검색)</div>
+            <input value={regionName} onChange={(e) => setRegionName(e.target.value)} placeholder="예: 서울, 부산…" className="w-full rounded-md border px-3 py-2" />
           </label>
-          <div className="flex gap-2 sm:col-span-3">
+          <div className="flex gap-2 sm:col-span-1">
             <button onClick={fetchList} disabled={loading} className="inline-flex items-center justify-center min-w-[96px] rounded-md border px-4 py-2.5">
               {loading ? '조회 중…' : '조회'}
             </button>
@@ -196,21 +198,22 @@ export default function Page() {
         </div>
 
         <div className="mt-4 overflow-auto rounded border">
-          <table className="min-w-[720px] w-full text-sm">
+          <table className="min-w-[880px] w-full text-sm">
             <thead className="bg-gray-50">
-              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold">
+              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-semibold whitespace-nowrap">
                 <th>월</th>
                 <th>지역명</th>
                 <th>항목</th>
                 <th className="text-right">값</th>
                 <th>단위</th>
+                <th>업데이트</th>
               </tr>
             </thead>
             <tbody>
               {error ? (
-                <tr><td className="px-3 py-6 text-red-600" colSpan={5}>{error}</td></tr>
+                <tr><td className="px-3 py-6 text-red-600" colSpan={6}>{error}</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td className="px-3 py-6 text-gray-500" colSpan={5}>조회 결과가 없습니다.</td></tr>
+                <tr><td className="px-3 py-6 text-gray-500" colSpan={6}>조회 결과가 없습니다.</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={`${r.prd_de}-${r.region_code}-${r.itm_id}`} className="odd:bg-white even:bg-gray-50">
@@ -219,6 +222,7 @@ export default function Page() {
                     <td className="px-3 py-2">{r.itm_name ?? r.itm_id}</td>
                     <td className="px-3 py-2 text-right">{fmtNum(r.value)}</td>
                     <td className="px-3 py-2">{r.unit ?? ''}</td>
+                    <td className="px-3 py-2">{fmtYmdHm(r.updated_at)}</td>
                   </tr>
                 ))
               )}
@@ -229,3 +233,4 @@ export default function Page() {
     </div>
   )
 }
+
