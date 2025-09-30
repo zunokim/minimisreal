@@ -31,7 +31,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'PARAM_INVALID: 시작 월이 종료 월보다 이후입니다.' }, { status: 400 })
     }
 
-    const query = supabaseAdmin
+    // ⚠️ 타입 오류 해결 포인트:
+    // - Supabase JS v2에서 select 문자열 파서가 타입을 GenericStringError로 추론할 수 있어
+    //   .returns<DbRow[]>()로 반환 타입을 명시합니다.
+    const { data, error } = await supabaseAdmin
       .from('krx_monthly_listing_stats')
       .select(
         [
@@ -48,15 +51,14 @@ export async function GET(request: Request) {
       )
       .gte('prd_de', startYm)
       .lte('prd_de', endYm)
-
-    const { data, error } = await query
+      .returns<DbRow[]>() // ← 반환 타입 고정
 
     if (error) {
       return NextResponse.json({ error: 'DB_SELECT_FAILED', detail: error.message }, { status: 500 })
     }
 
     const rows: DbRow[] = Array.isArray(data)
-      ? (data as DbRow[]).slice().sort((a, b) => (a.prd_de < b.prd_de ? -1 : a.prd_de > b.prd_de ? 1 : 0))
+      ? data.slice().sort((a, b) => (a.prd_de < b.prd_de ? -1 : a.prd_de > b.prd_de ? 1 : 0))
       : []
 
     return NextResponse.json({ ok: true, rows })
