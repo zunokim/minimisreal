@@ -16,17 +16,12 @@ type Row = {
   roll12_offer_trillion: number | null
 }
 
-function pad2(n: number) {
-  return n < 10 ? `0${n}` : `${n}`
-}
-
 const now = new Date()
 const DEFAULT_YEAR = now.getFullYear()
 const DEFAULT_START = `${DEFAULT_YEAR}-01`
 const DEFAULT_END = `${DEFAULT_YEAR}-12`
 
 export default function Page() {
-  // ✅ 연도 입력 제거: 시작/종료 '월'만 사용
   const [startYm, setStartYm] = useState<string>(DEFAULT_START)
   const [endYm, setEndYm] = useState<string>(DEFAULT_END)
 
@@ -55,7 +50,6 @@ export default function Page() {
       if (v) throw new Error(v)
 
       setIngestLoading(true)
-      // 백엔드 라우트가 year 파라미터를 요구하므로, 종료월의 연도를 넘겨줍니다(실데이터는 BAS_YYMM에서 파싱).
       const fallbackYear = endYm.slice(0, 4)
 
       const url = new URL('/api/ingest/krx/monthly-listing', window.location.origin)
@@ -68,7 +62,6 @@ export default function Page() {
       if (!res.ok) {
         throw new Error(data?.detail || data?.error || '수집 실패')
       }
-      // 수집 성공 후 자동 조회
       await onQuery()
     } catch (err) {
       const msg = err instanceof Error ? err.message : '알 수 없는 오류'
@@ -91,7 +84,7 @@ export default function Page() {
       const res = await fetch(url.toString(), { method: 'GET' })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.detail || data?.error || '조회 실패')
-      setRows(data.rows as Row[])
+      setRows((data.rows ?? []) as Row[])
     } catch (err) {
       const msg = err instanceof Error ? err.message : '알 수 없는 오류'
       setErrorMsg(`조회 실패: ${msg}`)
@@ -117,7 +110,7 @@ export default function Page() {
           className="inline-flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm hover:shadow transition"
           aria-label="뒤로가기"
         >
-          ← 뒤로가기
+          ← 데이터 목록
         </Link>
       </div>
 
@@ -206,13 +199,27 @@ export default function Page() {
                 .map((r) => (
                   <tr key={`${r.prd_de}-${r.market}`} className="border-t">
                     <td className="px-3 py-2">{r.prd_de}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.listed_count, 0)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.avg_capital_100b)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.avg_mktcap_100b)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.sum_mktcap_100b)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.avg_offer_100b)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.sum_offer_100b)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(r.roll12_offer_trillion)}</td>
+                    <td className="px-3 py-2 text-right">
+                      {r.listed_count == null ? '-' : r.listed_count.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.avg_capital_100b == null ? '-' : r.avg_capital_100b.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.avg_mktcap_100b == null ? '-' : r.avg_mktcap_100b.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.sum_mktcap_100b == null ? '-' : r.sum_mktcap_100b.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.avg_offer_100b == null ? '-' : r.avg_offer_100b.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.sum_offer_100b == null ? '-' : r.sum_offer_100b.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.roll12_offer_trillion == null ? '-' : r.roll12_offer_trillion.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
                     <td className="px-3 py-2 text-left">{r.market}</td>
                   </tr>
                 ))
