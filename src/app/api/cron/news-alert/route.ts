@@ -1,3 +1,4 @@
+// src/app/api/cron/news-alert/route.ts
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchNaverNews } from '@/lib/news/ingestNaver' 
@@ -9,7 +10,16 @@ const supabase = createClient(
 
 export const dynamic = 'force-dynamic'
 
-// 텔레그램 전체 발송 함수 (여러 명에게 동시에)
+// HTML 특수문자 이스케이프 함수 (텔레그램 오류 방지용)
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 async function broadcastMessage(subscribers: string[], text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return
@@ -21,8 +31,8 @@ async function broadcastMessage(subscribers: string[], text: string) {
       body: JSON.stringify({
         chat_id: chatId,
         text: text,
-        parse_mode: 'HTML', // HTML 태그 사용
-        disable_web_page_preview: true // 링크 미리보기 끄기 (깔끔하게)
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
       }),
     }).catch(e => console.error(`Send failed to ${chatId}`, e))
   )
@@ -32,68 +42,54 @@ async function broadcastMessage(subscribers: string[], text: string) {
 
 export async function GET(request: Request) {
   try {
-    // 1. 보안 체크
     const authHeader = request.headers.get('authorization')
     if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // 2. 키워드 및 구독자 가져오기
     const { data: keywordData } = await supabase.from('alert_keywords').select('keyword')
-    if (!keywordData || keywordData.length === 0) {
-      return NextResponse.json({ message: 'No keywords found' })
-    }
+    if (!keywordData || keywordData.length === 0) return NextResponse.json({ message: 'No keywords' })
     const keywords = keywordData.map(k => k.keyword)
 
-    const { data: subsData } = await supabase
-      .from('telegram_subscribers')
-      .select('chat_id')
-      .eq('is_active', true)
-    
-    if (!subsData || subsData.length === 0) {
-      return NextResponse.json({ message: 'No active subscribers' })
-    }
+    const { data: subsData } = await supabase.from('telegram_subscribers').select('chat_id').eq('is_active', true)
+    if (!subsData || subsData.length === 0) return NextResponse.json({ message: 'No active subscribers' })
     const subscriberIds = subsData.map(s => s.chat_id)
 
     let totalSentMessages = 0
     const processedStats: any[] = []
 
-    // 3. 키워드별로 뉴스 수집 및 묶음 발송
     for (const keyword of keywords) {
       const articles = await fetchNaverNews(keyword)
-      
-      // 이번 텀에 발송할 새 기사들을 담을 바구니
       const newArticlesToSend: any[] = []
 
       for (const article of articles) {
-        // (A) 날짜 필터: 최근 20분 이내 기사인지 (테스트 시 60분 등으로 조절 가능)
         const pubDate = new Date(article.pubDate)
         const now = new Date()
         const diffMinutes = (now.getTime() - pubDate.getTime()) / (1000 * 60)
 
-        if (diffMinutes > 20) continue 
+        // [테스트 팁] 안 온다면 여기를 720(12시간)으로 늘려서 테스트하세요. 평소엔 20~60 추천.
+        if (diffMinutes > 60) continue 
 
-        // (B) 중복 체크: DB에 있는지 확인
         const { data: existing } = await supabase
           .from('news_articles')
           .select('id')
           .eq('source_url', article.link)
           .single()
 
-        // DB에 없으면(새 기사면) 바구니에 담기 + DB 저장
         if (!existing) {
-           const cleanTitle = article.title.replace(/<[^>]*>?/gm, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-           
-           // 바구니에 추가
+           // 1. 태그 제거 (<b> 등)
+           let rawTitle = article.title.replace(/<[^>]*>?/gm, '');
+           // 2. 텔레그램용 특수문자 변환 (매우 중요!)
+           const safeTitle = escapeHtml(rawTitle);
+
            newArticlesToSend.push({
-             title: cleanTitle,
+             title: safeTitle,
              link: article.link,
              time: pubDate.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})
            })
 
-           // DB에 즉시 저장 (다음 실행 때 중복 방지)
            await supabase.from('news_articles').insert({
-              title: cleanTitle,
+              title: rawTitle, // DB엔 원본(태그만 뗀) 저장
               content: article.description,
               publisher: 'Naver Search',
               source_url: article.link,
@@ -102,9 +98,7 @@ export async function GET(request: Request) {
         }
       }
 
-      // (C) 모인 기사가 있다면 '한 번에' 발송
       if (newArticlesToSend.length > 0) {
-        // 메시지 만들기
         let message = `📢 <b>[${keyword}] 새 소식 (${newArticlesToSend.length}건)</b>\n\n`
         
         newArticlesToSend.forEach((item, index) => {
@@ -113,7 +107,6 @@ export async function GET(request: Request) {
         })
 
         await broadcastMessage(subscriberIds, message)
-        
         totalSentMessages++
         processedStats.push({ keyword, count: newArticlesToSend.length })
       }
@@ -127,7 +120,6 @@ export async function GET(request: Request) {
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Cron Error:', msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
