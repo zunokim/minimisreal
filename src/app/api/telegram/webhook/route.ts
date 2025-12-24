@@ -40,7 +40,7 @@ export async function POST(request: Request) {
         await sendMessage(chatId, `
 🎉 <b>환영합니다! 뉴스 알림 구독이 완료되었습니다.</b>
 
-관리자가 설정한 주요 뉴스 키워드에 맞춰
+한화투자 증권의 뉴스 키워드에 맞춰
 5분마다 최신 소식을 전해드립니다.
 
 알림을 끄고 싶으시면 <code>/stop</code>을 입력해주세요.
