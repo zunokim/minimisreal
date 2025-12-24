@@ -1,38 +1,104 @@
 // src/app/news/alerts/page.tsx
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
+// 1. 명확한 타입 정의
+interface AlertKeyword {
+  id: string
+  keyword: string
+  created_at: string
+}
+
+// 시각화 컴포넌트
+const KeywordVisualizer = ({ text }: { text: string }) => {
+  if (text.includes('|')) {
+    const parts = text.split('|').map(t => t.trim())
+    return (
+      <div className="flex flex-wrap gap-2 items-center">
+        {parts.map((part, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            {idx > 0 && <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1 rounded">OR</span>}
+            <span className="px-2 py-1 bg-orange-100 text-orange-800 rounded-md text-sm font-medium border border-orange-200">
+              {part}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const parts = text.split(/\s+/).filter(Boolean)
+  return (
+    <div className="flex flex-wrap gap-2 items-center">
+      {parts.map((part, idx) => (
+        <div key={idx} className="flex items-center gap-2">
+          {idx > 0 && <span className="text-xs font-bold text-blue-300">+</span>}
+          <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-sm font-medium border border-blue-200">
+            {part}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function NewsAlertPage() {
-  const [keywords, setKeywords] = useState<any[]>([])
+  // 2. useState에 타입 적용
+  const [keywords, setKeywords] = useState<AlertKeyword[]>([])
   const [input, setInput] = useState('')
-  const [subCount, setSubCount] = useState(0) // 구독자 수 표시용
+  const [subCount, setSubCount] = useState(0)
+  const [sendingTest, setSendingTest] = useState(false)
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  const fetchData = async () => {
+  // 3. useCallback으로 함수 메모이제이션 (useEffect 의존성 해결)
+  const fetchData = useCallback(async () => {
     // 키워드 목록
-    const { data: kData } = await supabase.from('alert_keywords').select('*').order('created_at', { ascending: false })
-    if (kData) setKeywords(kData)
+    const { data: kData } = await supabase
+      .from('alert_keywords')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (kData) setKeywords(kData as AlertKeyword[])
 
-    // 현재 구독자 수 (재미 요소)
-    const { count } = await supabase.from('telegram_subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true)
+    // 구독자 수
+    const { count } = await supabase
+      .from('telegram_subscribers')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_active', true)
+      
     if (count !== null) setSubCount(count)
-  }
+  }, [supabase])
 
-  useEffect(() => { fetchData() }, [])
+  // 4. 의존성 배열에 fetchData 추가
+  useEffect(() => { 
+    fetchData() 
+  }, [fetchData])
 
   const addKeyword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
-    const { error } = await supabase.from('alert_keywords').insert({ keyword: input.trim() })
     
-    if (error) alert('이미 등록되었거나 권한이 없습니다.')
-    else {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      alert('관리자 로그인이 필요합니다.')
+      return
+    }
+
+    const { error } = await supabase.from('alert_keywords').insert({ 
+      keyword: input.trim(),
+      created_by: session.user.id 
+    })
+    
+    if (error) {
+      if (error.code === '23505') alert('이미 등록된 키워드입니다.')
+      else alert('오류가 발생했습니다: ' + error.message)
+    } else {
       setInput('')
       fetchData()
     }
@@ -44,38 +110,90 @@ export default function NewsAlertPage() {
     fetchData()
   }
 
+  const sendTestBroadcast = async () => {
+    if (subCount === 0) return alert('구독자가 없습니다.')
+    if (!confirm(`현재 구독자 ${subCount}명 전원에게 테스트 메시지를 보냅니다.\n계속하시겠습니까?`)) return
+
+    setSendingTest(true)
+    try {
+      const res = await fetch('/api/telegram/test-broadcast', { method: 'POST' })
+      const json = await res.json()
+      if (res.ok) alert(`성공적으로 발송했습니다! (성공: ${json.sent}/${json.total})`)
+      else alert(`발송 실패: ${json.error}`)
+    } catch (e) {
+      alert('오류가 발생했습니다.')
+    }
+    setSendingTest(false)
+  }
+
   return (
-    <div className="max-w-2xl mx-auto p-6">
-      <div className="mb-8 border-b pb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">📢 뉴스 브리핑 설정</h1>
-        <p className="text-gray-600">
-          여기서 키워드를 등록하면, <b>현재 구독 중인 {subCount}명</b>의 텔레그램 사용자에게 뉴스가 발송됩니다.
-        </p>
+    <div className="max-w-3xl mx-auto p-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 pb-6 border-b">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">📢 뉴스 브리핑 센터</h1>
+          <p className="text-gray-600">
+            현재 <b>{subCount}명</b>의 구독자가 뉴스를 기다리고 있습니다.
+          </p>
+        </div>
+        <button 
+          onClick={sendTestBroadcast}
+          disabled={sendingTest || subCount === 0}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          {sendingTest ? '발송 중...' : '🔔 전체 테스트 발송'}
+        </button>
       </div>
       
-      <form onSubmit={addKeyword} className="flex gap-2 mb-8">
+      <form onSubmit={addKeyword} className="flex gap-2 mb-4">
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="공유할 뉴스 키워드 (예: 금리인상)"
-          className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+          placeholder="예: 삼성전자 실적 (띄어쓰기=AND, |=OR)"
+          className="flex-1 p-4 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
         />
-        <button type="submit" className="bg-blue-600 text-white px-6 rounded-lg font-bold hover:bg-blue-700">
+        <button 
+          type="submit" 
+          className="bg-blue-600 text-white px-8 rounded-xl font-bold hover:bg-blue-700 shadow-sm transition"
+        >
           등록
         </button>
       </form>
+      
+      <div className="text-xs text-gray-500 mb-10 pl-2">
+        Tip: <b>삼성전자 실적</b> (둘 다 포함), <b>애플 | 아이폰</b> (둘 중 하나 포함)
+      </div>
 
-      <h2 className="font-bold text-gray-800 mb-4">등록된 키워드 ({keywords.length})</h2>
+      <h2 className="text-lg font-bold text-gray-800 mb-4 pl-2 border-l-4 border-blue-500">
+        편성된 키워드 ({keywords.length})
+      </h2>
+      
       <ul className="grid gap-3">
         {keywords.map((item) => (
-          <li key={item.id} className="flex justify-between items-center p-4 bg-white border rounded-lg shadow-sm">
-            <span className="font-medium text-lg text-gray-800">{item.keyword}</span>
-            <button onClick={() => deleteKeyword(item.id)} className="text-red-500 hover:bg-red-50 px-3 py-1 rounded">
-              삭제
+          <li key={item.id} className="flex justify-between items-center p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition group">
+            <div className="flex flex-col gap-1">
+              <KeywordVisualizer text={item.keyword} />
+              <span className="text-[10px] text-gray-400 font-mono mt-1 ml-1">
+                {new Date(item.created_at).toLocaleDateString()} 등록
+              </span>
+            </div>
+            
+            <button 
+              onClick={() => deleteKeyword(item.id)} 
+              className="text-gray-300 hover:text-red-500 p-2 rounded-full hover:bg-red-50 transition"
+              title="삭제"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
             </button>
           </li>
         ))}
+        {keywords.length === 0 && (
+          <li className="text-center text-gray-400 py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            등록된 키워드가 없습니다.<br/>위에서 새로운 뉴스 주제를 편성해보세요.
+          </li>
+        )}
       </ul>
     </div>
   )
