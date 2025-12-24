@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     const excelBuf = await fetchKotcExcel({ from, to, section })
 
     // 2) 파싱 → 정규화
-    const rows = parseKotcTermMarketExcel(excelBuf, { section })
+   const rows = parseKotcTermMarketExcel(excelBuf.buffer as ArrayBuffer, { section })
     if (rows.length === 0) {
       return NextResponse.json({ error: 'No rows parsed' }, { status: 502 })
     }

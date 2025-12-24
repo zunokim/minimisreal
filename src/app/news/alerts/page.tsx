@@ -4,14 +4,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
-// 1. 명확한 타입 정의
-interface AlertKeyword {
-  id: string
-  keyword: string
-  created_at: string
-}
-
-// 시각화 컴포넌트
+// --- 키워드 시각화 컴포넌트 ---
 const KeywordVisualizer = ({ text }: { text: string }) => {
   if (text.includes('|')) {
     const parts = text.split('|').map(t => t.trim())
@@ -44,8 +37,13 @@ const KeywordVisualizer = ({ text }: { text: string }) => {
   )
 }
 
+interface AlertKeyword {
+  id: string
+  keyword: string
+  created_at: string
+}
+
 export default function NewsAlertPage() {
-  // 2. useState에 타입 적용
   const [keywords, setKeywords] = useState<AlertKeyword[]>([])
   const [input, setInput] = useState('')
   const [subCount, setSubCount] = useState(0)
@@ -56,7 +54,6 @@ export default function NewsAlertPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  // 3. useCallback으로 함수 메모이제이션 (useEffect 의존성 해결)
   const fetchData = useCallback(async () => {
     // 키워드 목록
     const { data: kData } = await supabase
@@ -75,15 +72,13 @@ export default function NewsAlertPage() {
     if (count !== null) setSubCount(count)
   }, [supabase])
 
-  // 4. 의존성 배열에 fetchData 추가
-  useEffect(() => { 
-    fetchData() 
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const addKeyword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
     
+    // 로그인 체크
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
       alert('관리자 로그인이 필요합니다.')
@@ -110,6 +105,7 @@ export default function NewsAlertPage() {
     fetchData()
   }
 
+  // 전체 테스트 발송
   const sendTestBroadcast = async () => {
     if (subCount === 0) return alert('구독자가 없습니다.')
     if (!confirm(`현재 구독자 ${subCount}명 전원에게 테스트 메시지를 보냅니다.\n계속하시겠습니까?`)) return
@@ -120,7 +116,8 @@ export default function NewsAlertPage() {
       const json = await res.json()
       if (res.ok) alert(`성공적으로 발송했습니다! (성공: ${json.sent}/${json.total})`)
       else alert(`발송 실패: ${json.error}`)
-    } catch (e) {
+    } catch (error) { // 여기서 'e' 대신 'error'를 쓰거나 사용하지 않음
+      console.error(error)
       alert('오류가 발생했습니다.')
     }
     setSendingTest(false)
@@ -144,6 +141,7 @@ export default function NewsAlertPage() {
         </button>
       </div>
       
+      {/* 입력 폼 */}
       <form onSubmit={addKeyword} className="flex gap-2 mb-4">
         <input
           type="text"
@@ -168,6 +166,7 @@ export default function NewsAlertPage() {
         편성된 키워드 ({keywords.length})
       </h2>
       
+      {/* 키워드 목록 */}
       <ul className="grid gap-3">
         {keywords.map((item) => (
           <li key={item.id} className="flex justify-between items-center p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition group">
