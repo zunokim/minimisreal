@@ -43,6 +43,8 @@ export async function POST(request: Request) {
 한화투자증권의 등록된 뉴스 키워드에 맞춰
 5분마다 최신 소식을 전해드립니다.
 
+키워드 등록이 필요한 경우 관리자에게 연락해주세요.
+
 알림을 끄고 싶으시면 <code>/stop</code>을 입력해주세요.
         `)
       }
