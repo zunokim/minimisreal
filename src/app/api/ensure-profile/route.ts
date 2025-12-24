@@ -12,8 +12,9 @@ export async function GET() {
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cookiesToSet) => {
-          cookiesToSet.forEach(({ name, value, options }) => {
+        // ▼▼▼ 수정된 부분: 타입 에러 방지를 위해 : any 추가 ▼▼▼
+        setAll: (cookiesToSet: any) => {
+          cookiesToSet.forEach(({ name, value, options }: any) => {
             res.cookies.set(name, value, options)
           })
         },
