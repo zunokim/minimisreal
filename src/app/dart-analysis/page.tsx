@@ -493,7 +493,7 @@ export default function DartAnalysisPage() {
                     <XAxis dataKey="corp_name" tick={{ fontSize: 12 }} interval={0} height={60} />
                     <YAxis tickFormatter={(v: number) => v.toLocaleString()} />
                     {/* formatter 파라미터 타입 좁혀서 any 사용 회피 */}
-                    <Tooltip formatter={(value: number | string) => (typeof value === 'number' ? value.toLocaleString() : String(value))} />
+                    <Tooltip formatter={(value: any) => (typeof value === 'number' ? value.toLocaleString() : String(value))} />
                     <Legend />
                     {/* 당기(검정, 한화는 주황) */}
                     <Bar dataKey="th_scaled" name="당기금액" fill={TH_COLOR_DEFAULT}>
