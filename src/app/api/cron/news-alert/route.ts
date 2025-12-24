@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchNaverNews } from '@/lib/news/ingestNaver' 
 
-// Vercel 타임아웃 60초 설정
+// Vercel 타임아웃 60초
 export const maxDuration = 60 
 export const dynamic = 'force-dynamic'
 
@@ -34,7 +34,7 @@ async function broadcastMessage(subscribers: string[], text: string) {
         body: JSON.stringify({
           chat_id: chatId,
           text: text,
-          parse_mode: 'HTML', // HTML 모드
+          parse_mode: 'HTML',
           disable_web_page_preview: true
         }),
       })
@@ -80,11 +80,11 @@ export async function GET(request: Request) {
       const newArticlesToSend: any[] = []
 
       for (const article of articles) {
-        // [테스트용] 시간을 넉넉하게 720분(12시간)으로 설정
-        // 실제 운영 시에는 20~60분으로 줄이는 것 권장
+        // [테스트] 시간 넉넉히 (실제 운영 시 20~60분 권장)
         const pubDate = new Date(article.pubDate)
         const diffMinutes = (new Date().getTime() - pubDate.getTime()) / (1000 * 60)
 
+        // 테스트용: 720분(12시간) / 운영용: 60분
         if (diffMinutes > 720) continue 
 
         const { data: existing } = await supabase
@@ -108,33 +108,35 @@ export async function GET(request: Request) {
         }
       }
 
-      // 최대 5개까지만 발송
-      const limitedArticles = newArticlesToSend.slice(0, 5); 
-
-      if (limitedArticles.length > 0) {
-        let message = `📢 <b>[${keyword}] 새 소식 (${limitedArticles.length}건)</b>\n\n`
+      // 수집된 새 기사가 있다면
+      if (newArticlesToSend.length > 0) {
+        // [수정] 15개씩 잘라서 보내기 (메시지 길이 제한 방지)
+        const CHUNK_SIZE = 15;
         
-        limitedArticles.forEach((item, index) => {
-          message += `${index + 1}. <a href="${item.link}">${item.safeTitle}</a>\n`
-          // [수정된 부분] <small> 태그 제거하고 <i> (이탤릭) 사용
-          message += `   <i>(${item.time})</i>\n\n`
-        })
+        for (let i = 0; i < newArticlesToSend.length; i += CHUNK_SIZE) {
+            const chunk = newArticlesToSend.slice(i, i + CHUNK_SIZE);
+            
+            let message = `📢 <b>[${keyword}] 새 소식 (${i + 1}~${i + chunk.length} / 전체 ${newArticlesToSend.length}건)</b>\n\n`
+            
+            chunk.forEach((item, index) => {
+              // 번호는 전체 리스트 기준
+              message += `${i + index + 1}. <a href="${item.link}">${item.safeTitle}</a>\n`
+              message += `   <i>(${item.time})</i>\n\n`
+            })
 
-        if (newArticlesToSend.length > 5) {
-            message += `<i>외 ${newArticlesToSend.length - 5}건의 추가 소식이 있습니다.</i>`
+            // 발송
+            const sendResult = await broadcastMessage(subscriberIds, message)
+            
+            debugLogs.push({
+                keyword,
+                batch: `${i/CHUNK_SIZE + 1}번째 묶음`,
+                sent_count: chunk.length,
+                result: sendResult
+            })
         }
 
-        const sendResult = await broadcastMessage(subscriberIds, message)
-        
-        debugLogs.push({
-          keyword,
-          articles_found: newArticlesToSend.length,
-          articles_sent: limitedArticles.length,
-          telegram_result: sendResult
-        })
-
-        // DB 저장
-        const itemsToInsert = limitedArticles.map(item => ({
+        // [수정] 발송한 '모든' 기사 DB 저장
+        const itemsToInsert = newArticlesToSend.map(item => ({
             title: item.rawTitle,
             content: item.desc,
             publisher: 'Naver Search',
