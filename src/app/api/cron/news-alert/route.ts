@@ -3,124 +3,113 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchNaverNews } from '@/lib/news/ingestNaver' 
 
-// ⚠️ 중요: Cron 작업은 RLS(보안정책)를 우회해야 하므로 SERVICE_ROLE_KEY를 사용합니다.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// 정적 캐싱 방지 (항상 최신 실행)
 export const dynamic = 'force-dynamic'
 
-// 텔레그램 전체 발송 함수
+// [수정 1] 전송 결과를 리턴하도록 함수 변경
 async function broadcastMessage(subscribers: string[], text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN
-  if (!token) return
+  if (!token) return [{ status: 'error', message: 'No Bot Token in Env' }]
 
-  // Promise.all로 병렬 전송 (속도 향상)
-  const promises = subscribers.map(chatId => 
-    fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'HTML', // HTML 태그 사용 허용
-      }),
-    }).catch(e => console.error(`Send failed to ${chatId}`, e))
-  )
-  
-  await Promise.all(promises)
+  const results = await Promise.all(subscribers.map(async (chatId) => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'HTML',
+        }),
+      })
+      const data = await res.json()
+      return { chatId, ok: res.ok, telegram_response: data }
+    } catch (e: any) {
+      return { chatId, ok: false, error: e.message }
+    }
+  }))
+  return results
 }
 
 export async function GET(request: Request) {
   try {
-    // 1. 보안 체크 (Cron Secret Key)
-    const authHeader = request.headers.get('authorization')
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // 2. [관리자 설정] 키워드 목록 가져오기
-    const { data: keywordData } = await supabase.from('alert_keywords').select('keyword')
-    if (!keywordData || keywordData.length === 0) {
-      return NextResponse.json({ message: 'No keywords found' })
-    }
-    const keywords = keywordData.map(k => k.keyword)
-
-    // 3. [구독자] 활성화된 구독자 목록 가져오기
-    const { data: subsData } = await supabase
-      .from('telegram_subscribers')
-      .select('chat_id')
-      .eq('is_active', true)
+    // ... (권한 체크 부분 생략 - 그대로 두세요) ...
+    // 편의상 인증 체크 부분은 유지하시되, 테스트를 위해 주석처리 하셔도 됩니다.
     
-    if (!subsData || subsData.length === 0) {
-      return NextResponse.json({ message: 'No active subscribers' })
-    }
-    const subscriberIds = subsData.map(s => s.chat_id)
+    // ... (키워드/구독자 가져오는 부분 생략 - 그대로 두세요) ...
+    // 아래 코드는 기존 코드의 2, 3번 단계(키워드/구독자 조회)가 있다고 가정합니다.
+    
+    // [잠시 테스트용] 로직 흐름 확인을 위해 코드를 다시 씁니다.
+    // 기존에 작성하신 상단 import, supabase 설정, GET 시작 부분은 유지하세요.
+    
+    // (여기서부터 기존 로직 내부에 붙여넣으세요)
+    const { data: keywordData } = await supabase.from('alert_keywords').select('keyword')
+    const keywords = keywordData?.map(k => k.keyword) || []
+    
+    const { data: subsData } = await supabase.from('telegram_subscribers').select('chat_id').eq('is_active', true)
+    const subscriberIds = subsData?.map(s => s.chat_id) || []
 
-    let totalSent = 0
+    // 디버깅용 로그 저장소
+    const debugLogs: any[] = []
 
-    // 4. 각 키워드별 뉴스 검색 및 처리
     for (const keyword of keywords) {
-      // 네이버 API 호출
       const articles = await fetchNaverNews(keyword)
 
       for (const article of articles) {
-        // (A) 날짜 필터: 최근 20분 이내 기사인지 확인
+        // [테스트] 시간 제한을 12시간(720분)으로 늘림
         const pubDate = new Date(article.pubDate)
-        const now = new Date()
-        const diffMinutes = (now.getTime() - pubDate.getTime()) / (1000 * 60)
+        const diffMinutes = (new Date().getTime() - pubDate.getTime()) / (1000 * 60)
+        
+        if (diffMinutes > 720) continue 
 
-        // 20분이 지났으면 건너뜀 (뒷북 방지)
-        // 단, 미래 시간(서버 시간차)일 수도 있으니 음수는 허용
-        if (diffMinutes > 20) continue 
-
-        // (B) 중복 방지: DB에 이미 저장된 뉴스인지 확인
+        // 중복 체크
         const { data: existing } = await supabase
           .from('news_articles')
           .select('id')
           .eq('source_url', article.link)
           .single()
 
-        // DB에 없을 때만(새로운 뉴스일 때만) 처리
+        // [중요] 디버깅을 위해 '기존에 있어도' 테스트 시엔 강제로 보내보거나, 
+        // 로그를 남깁니다. 여기선 '없을 때만 보냄' 유지하되 로그 추가.
+        
         if (!existing) {
            const cleanTitle = article.title.replace(/<[^>]*>?/gm, '')
-           const cleanDesc = article.description.replace(/<[^>]*>?/gm, '')
+           const message = `📢 [${keyword}] ${cleanTitle}\n${article.link}`
            
-           const message = `
-📢 <b>[${keyword}] 뉴스</b>
+           // [수정 2] 전송 결과 받기
+           const sendResult = await broadcastMessage(subscriberIds, message)
+           debugLogs.push({ 
+             type: 'SEND_ATTEMPT', 
+             article: cleanTitle, 
+             result: sendResult 
+           })
 
-📰 <a href="${article.link}">${cleanTitle}</a>
-
-<small>${pubDate.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}</small>
-           `
-           
-           // (C) 구독자 전체에게 발송
-           await broadcastMessage(subscriberIds, message)
-           totalSent += subscriberIds.length
-
-           // (D) 발송 후 DB에 저장 (중복 처리 방지용)
+           // DB 저장
            await supabase.from('news_articles').insert({
-              title: cleanTitle, // 태그 제거된 제목 저장
-              content: cleanDesc,
-              publisher: 'Naver Search',
+              title: cleanTitle,
+              content: article.description,
+              publisher: 'Naver',
               source_url: article.link,
               published_at: pubDate.toISOString(),
            })
+        } else {
+            // 중복이라 안 보낸 것도 로그에 남김
+            debugLogs.push({ type: 'SKIP_DUPLICATE', article: article.title })
         }
       }
     }
 
+    // [수정 3] 결과 JSON에 상세 로그 포함
     return NextResponse.json({ 
       success: true, 
-      processed_keywords: keywords.length,
-      broadcast_count: totalSent 
+      debug_logs: debugLogs 
     })
 
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Cron Error:', msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
