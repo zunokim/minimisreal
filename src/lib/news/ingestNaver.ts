@@ -8,6 +8,15 @@ const DISPLAY = 100
 const SORT = 'date'
 const USER_AGENT = 'miniMIS/NewsFetcher (+https://example.com)'
 
+// --- [추가] 외부에서 사용할 인터페이스 정의 ---
+export interface NaverNewsItem {
+  title: string
+  originallink: string
+  link: string
+  description: string
+  pubDate: string
+}
+
 function normalizeTitle(title: string) {
   return (title || '')
     .replace(/<b>|<\/b>/g, '')
@@ -55,9 +64,7 @@ type IngestOptions = {
 }
 
 /**
- * 네이버 뉴스에서 최신순으로 수집.
- * - 주어진 days 기간 내 기사만 upsert (source_url UNIQUE 가정)
- * - maxPages 만큼 페이징, since 보다 오래된 기사 나오면 조기중단
+ * 기존 기능: 네이버 뉴스 수집 및 Supabase 저장
  */
 export async function ingestNaverNews(
   supabase: SupabaseClient,
@@ -75,8 +82,8 @@ export async function ingestNaverNews(
   let stop = false
 
   for (let page = 0; page < maxPages && !stop; page++) {
-    const start = 1 + page * DISPLAY // 1, 101, 201, ...
-    if (start > 1000) break // 네이버 API 한계
+    const start = 1 + page * DISPLAY
+    if (start > 1000) break
 
     const url =
       `${NAVER_ENDPOINT}?query=${encodeURIComponent(query)}&display=${DISPLAY}` +
@@ -94,18 +101,11 @@ export async function ingestNaverNews(
       throw new Error(`NAVER API: ${text || apiRes.statusText}`)
     }
     const json = (await apiRes.json()) as {
-      items?: Array<{
-        title: string
-        originallink?: string
-        link: string
-        description?: string
-        pubDate?: string
-      }>
+      items?: Array<Partial<NaverNewsItem>>
     }
     const items = json.items || []
     if (items.length === 0) break
 
-    // 정규화 & 기간 필터
     const seen = new Set<string>()
     for (const it of items) {
       const title = normalizeTitle(it.title || '')
@@ -120,7 +120,6 @@ export async function ingestNaverNews(
       const pubISO = it.pubDate ? new Date(it.pubDate).toISOString() : null
       const pubDate = pubISO ? new Date(pubISO) : null
 
-      // 최신순이므로 기간보다 오래된 것이 나오기 시작하면 더 내려가지 않음
       if (pubDate && pubDate < since) {
         stop = true
         continue
@@ -134,7 +133,6 @@ export async function ingestNaverNews(
         content = it.description.replace(/<b>|<\/b>/g, '').trim()
       }
 
-      // DB 저장
       const { error } = await supabase
         .from('news_articles')
         .upsert(
@@ -143,7 +141,7 @@ export async function ingestNaverNews(
             content,
             publisher,
             source_url: url,
-            published_at: pubISO,  // null 허용
+            published_at: pubISO,
             title_hash,
           },
           { onConflict: 'source_url' }
@@ -156,4 +154,37 @@ export async function ingestNaverNews(
   }
 
   return { collected, inserted }
+}
+
+/**
+ * --- [추가] 뉴스 알림용 단순 조회 함수 ---
+ * 단순히 키워드로 검색하여 결과 목록(items)만 반환합니다.
+ */
+export async function fetchNaverNews(query: string): Promise<NaverNewsItem[]> {
+  const client_id = process.env.NAVER_CLIENT_ID
+  const client_secret = process.env.NAVER_CLIENT_SECRET
+  
+  if (!client_id || !client_secret) {
+    throw new Error('Naver API keys missing')
+  }
+
+  // 검색어 인코딩
+  const encText = encodeURIComponent(query)
+  // 최신순 정렬, 10개만 가져옴
+  const url = `${NAVER_ENDPOINT}?query=${encText}&display=10&start=1&sort=${SORT}`
+
+  const res = await fetch(url, {
+    headers: {
+      'X-Naver-Client-Id': client_id,
+      'X-Naver-Client-Secret': client_secret,
+    },
+    cache: 'no-store',
+  })
+
+  if (!res.ok) {
+    throw new Error(`Naver API Error: ${res.statusText}`)
+  }
+
+  const data = await res.json()
+  return (data.items || []) as NaverNewsItem[]
 }

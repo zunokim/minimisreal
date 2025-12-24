@@ -7,8 +7,8 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import LogoutButton from '@/components/LogoutButton'
 
-// lucide-react 아이콘
-import { Home, FileText, BarChart3, Newspaper, Settings, Calendar, FileSpreadsheet } from 'lucide-react'
+// lucide-react 아이콘 (Bell 추가됨)
+import { Home, FileText, BarChart3, Newspaper, Settings, Calendar, FileSpreadsheet, Bell } from 'lucide-react'
 
 type NavItem = { name: string; href: string; icon: React.ReactNode }
 
@@ -18,7 +18,9 @@ const navItems: NavItem[] = [
   { name: 'Schedule',       href: '/schedule',       icon: <Calendar className="w-4 h-4" /> },
   { name: 'Data',           href: '/data',           icon: <BarChart3 className="w-4 h-4" /> },
   { name: 'News',           href: '/news',           icon: <Newspaper className="w-4 h-4" /> },
-  { name: 'DART Analysis',  href: '/dart-analysis',  icon: <FileSpreadsheet className="w-4 h-4" /> }, // ✅ 추가
+  // ✅ [추가됨] 뉴스 알림 메뉴
+  { name: 'News Alert',     href: '/news/alerts',    icon: <Bell className="w-4 h-4" /> },
+  { name: 'DART Analysis',  href: '/dart-analysis',  icon: <FileSpreadsheet className="w-4 h-4" /> },
   { name: 'Etc',            href: '/etc',            icon: <Settings className="w-4 h-4" /> },
 ]
 
