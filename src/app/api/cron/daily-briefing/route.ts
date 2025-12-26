@@ -3,30 +3,16 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
-// 타임아웃 방지 (크롤링까지 할 수 있으므로 60초)
-export const maxDuration = 60 
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// KST 날짜 (YYYY-MM-DD)
+// KST 날짜 (YYYY-MM-DD) 구하기
 function getKSTDateString(date: Date) {
   const kstDate = new Date(date.getTime() + (9 * 60 * 60 * 1000));
   return kstDate.toISOString().split('T')[0];
-}
-
-// 네이버 검색 (최신순) - DB 없을 때 비상용
-async function fetchTodayNews(keyword: string) {
-  const clientId = process.env.NAVER_CLIENT_ID
-  const clientSecret = process.env.NAVER_CLIENT_SECRET
-  // 최신순(date)으로 50개 가져옴
-  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(keyword)}&display=50&sort=date`
-  
-  const res = await fetch(url, { headers: { 'X-Naver-Client-Id': clientId!, 'X-Naver-Client-Secret': clientSecret! } })
-  const data = await res.json()
-  return data.items || []
 }
 
 export async function GET(request: Request) {
@@ -36,7 +22,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const targetKeywords = ['한화투자증권', '한화증권']
+    const targetKeywords = ['한화투자증권', '한화증권'] // 묶어서 처리하고 싶으시면 로직 수정 가능
+    
+    // 구독자 가져오기
     const { data: subsData } = await supabase.from('telegram_subscribers').select('chat_id').eq('is_active', true)
     const subscriberIds = subsData?.map(s => s.chat_id) || []
 
@@ -44,65 +32,37 @@ export async function GET(request: Request) {
     
     const token = process.env.TELEGRAM_BOT_TOKEN
     const todayKST = getKSTDateString(new Date());
+    
+    // 배포된 사이트 주소
     const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
 
     let sentCount = 0;
-    const debugLogs: any[] = []
+    
+    // 오늘 범위 (00:00:00 ~ 23:59:59)
+    const startDate = `${todayKST}T00:00:00`
+    const endDate = `${todayKST}T23:59:59`
 
     for (const keyword of targetKeywords) {
-      const startDate = `${todayKST}T00:00:00`
-      const endDate = `${todayKST}T23:59:59`
-
-      // 1. DB 조회
+      // DB에서 오늘 fetched_at 기준 개수 조회
       const { count } = await supabase
         .from('news_articles')
-        .select('*', { count: 'exact', head: true })
+        .select('*', { count: 'exact', head: true }) // 데이터 없이 개수만
         .ilike('title', `%${keyword}%`)
-        .gte('published_at', startDate)
-        .lte('published_at', endDate)
+        .gte('fetched_at', startDate)
+        .lte('fetched_at', endDate)
       
-      let finalCount = count || 0;
-      let source = 'DB';
+      const newsCount = count || 0;
 
-      // 2. [핵심] DB에 없으면 강제 크롤링 및 저장
-      if (finalCount === 0) {
-        source = 'NaverAPI (Fallback)';
-        const items = await fetchTodayNews(keyword);
-        
-        // 오늘 날짜만 필터링
-        const todayItems = items.filter((item: any) => {
-          const itemDate = new Date(item.pubDate);
-          return getKSTDateString(itemDate) === todayKST;
-        });
-
-        if (todayItems.length > 0) {
-          // DB에 저장 (그래야 링크 클릭했을 때 보이니까)
-          const itemsToInsert = todayItems.map((item: any) => ({
-             title: item.title.replace(/<[^>]*>?/gm, ''),
-             content: item.description,
-             publisher: 'Naver Search',
-             source_url: item.link,
-             published_at: new Date(item.pubDate).toISOString(),
-          }));
-
-          // 중복 무시하고 저장 (upsert or ignore)
-          await supabase.from('news_articles').upsert(itemsToInsert, { onConflict: 'source_url', ignoreDuplicates: true });
-          
-          finalCount = todayItems.length;
-        }
-      }
-
-      debugLogs.push({ keyword, source, count: finalCount });
-
-      // 3. 알림 발송
-      if (finalCount > 0) {
+      // 1개 이상일 때만 발송
+      if (newsCount > 0) {
+        // 랜딩 페이지 링크 (로그인 불필요)
         const linkUrl = `${BASE_URL}/news/daily-summary?keyword=${encodeURIComponent(keyword)}&date=${todayKST}`
 
         const message = `🌅 <b>[오늘의 ${keyword} 브리핑]</b>\n\n`
           + `📅 기준: ${todayKST}\n`
-          + `📊 수집된 뉴스: <b>총 ${finalCount}건</b>\n\n`
-          + `👇 아래 링크를 눌러 전체 뉴스를 확인하세요.\n` 
-          + `<a href="${linkUrl}">🔗 전체 뉴스 보러가기</a>`
+          + `📊 수집된 뉴스: <b>총 ${newsCount}건</b>\n\n`
+          + `👇 아래 링크에서 전체 뉴스와 주간 추이를 확인하세요.\n` 
+          + `<a href="${linkUrl}">🔗 전체 뉴스 및 리포트 보러가기</a>`
 
         await Promise.all(subscriberIds.map(id => 
            fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -115,10 +75,9 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, sent_keywords: sentCount, logs: debugLogs })
+    return NextResponse.json({ success: true, sent_keywords: sentCount })
 
   } catch (e: any) {
-    console.error(e)
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
