@@ -1,9 +1,11 @@
+//src\app\news\alerts\page.tsx
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
-// --- 키워드 시각화 컴포넌트 (기존 유지) ---
+// --- 키워드 시각화 컴포넌트 ---
 const KeywordVisualizer = ({ text }: { text: string }) => {
   if (text.includes('|')) {
     const parts = text.split('|').map(t => t.trim())
@@ -36,18 +38,27 @@ const KeywordVisualizer = ({ text }: { text: string }) => {
   )
 }
 
-// --- 인터페이스 수정: alert_filter 추가 ---
 interface AlertKeyword {
   id: string
   keyword: string
-  alert_filter: string | null // 알림 조건 (null이면 전체 알림)
+  alert_filter: string | null
   created_at: string
 }
 
 export default function NewsAlertPage() {
   const [keywords, setKeywords] = useState<AlertKeyword[]>([])
-  const [input, setInput] = useState('')        // 수집 키워드
-  const [filterInput, setFilterInput] = useState('') // 알림 필터 (추가됨)
+  
+  // 키워드 등록/수정용 State
+  const [input, setInput] = useState('')
+  const [filterInput, setFilterInput] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editKeyword, setEditKeyword] = useState('')
+  const [editFilter, setEditFilter] = useState('')
+
+  // 공지 발송용 State
+  const [announcement, setAnnouncement] = useState('')
+  const [isSendingAnnouncement, setIsSendingAnnouncement] = useState(false)
+
   const [subCount, setSubCount] = useState(0)
   const [sendingTest, setSendingTest] = useState(false)
 
@@ -57,49 +68,31 @@ export default function NewsAlertPage() {
   )
 
   const fetchData = useCallback(async () => {
-    // 키워드 목록 (alert_filter 포함 조회)
-    const { data: kData } = await supabase
-      .from('alert_keywords')
-      .select('*')
-      .order('created_at', { ascending: false })
-    
+    const { data: kData } = await supabase.from('alert_keywords').select('*').order('created_at', { ascending: false })
     if (kData) setKeywords(kData as AlertKeyword[])
 
-    // 구독자 수
-    const { count } = await supabase
-      .from('telegram_subscribers')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true)
-      
+    const { count } = await supabase.from('telegram_subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true)
     if (count !== null) setSubCount(count)
   }, [supabase])
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // --- 키워드 관련 함수들 (등록, 삭제, 수정) ---
   const addKeyword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
-    
-    // 로그인 체크
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      alert('관리자 로그인이 필요합니다.')
-      return
-    }
+    if (!session) return alert('관리자 로그인이 필요합니다.')
 
     const { error } = await supabase.from('alert_keywords').insert({ 
-      keyword: input.trim(),
-      alert_filter: filterInput.trim() || null, // 비어있으면 null로 저장
-      created_by: session.user.id 
+      keyword: input.trim(), alert_filter: filterInput.trim() || null, created_by: session.user.id 
     })
     
     if (error) {
       if (error.code === '23505') alert('이미 등록된 키워드입니다.')
-      else alert('오류가 발생했습니다: ' + error.message)
+      else alert('오류: ' + error.message)
     } else {
-      setInput('')
-      setFilterInput('') // 필터 입력창도 초기화
-      fetchData()
+      setInput(''); setFilterInput(''); fetchData()
     }
   }
 
@@ -109,139 +102,161 @@ export default function NewsAlertPage() {
     fetchData()
   }
 
-  // 전체 테스트 발송
-  const sendTestBroadcast = async () => {
-    if (subCount === 0) return alert('구독자가 없습니다.')
-    if (!confirm(`현재 구독자 ${subCount}명 전원에게 테스트 메시지를 보냅니다.\n계속하시겠습니까?`)) return
+  const startEditing = (item: AlertKeyword) => {
+    setEditingId(item.id); setEditKeyword(item.keyword); setEditFilter(item.alert_filter || '')
+  }
 
+  const saveEdit = async () => {
+    if (!editKeyword.trim()) return alert('키워드 필수')
+    const { error } = await supabase.from('alert_keywords').update({ keyword: editKeyword.trim(), alert_filter: editFilter.trim() || null }).eq('id', editingId)
+    if (error) alert('실패: ' + error.message)
+    else { setEditingId(null); fetchData() }
+  }
+
+  // --- [NEW] 공지사항 발송 함수 ---
+  const sendAnnouncement = async () => {
+    if (!announcement.trim()) return alert('공지 내용을 입력해주세요.')
+    if (subCount === 0) return alert('구독자가 없습니다.')
+    
+    if (!confirm(`📢 정말로 ${subCount}명의 구독자에게 공지를 발송하시겠습니까?\n\n내용:\n${announcement}`)) return
+
+    setIsSendingAnnouncement(true)
+    try {
+      const res = await fetch('/api/telegram/manual-broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: announcement })
+      })
+      const json = await res.json()
+      
+      if (res.ok) {
+        alert(`발송 성공! (성공: ${json.sent} / 전체: ${json.total})`)
+        setAnnouncement('') // 입력창 초기화
+      } else {
+        alert(`발송 실패: ${json.error}`)
+      }
+    } catch (e: any) {
+      alert('오류 발생: ' + e.message)
+    }
+    setIsSendingAnnouncement(false)
+  }
+
+  // --- 기존 테스트 발송 함수 ---
+  const sendTestBroadcast = async () => {
+    if (!confirm(`테스트 메시지를 보내시겠습니까?`)) return
     setSendingTest(true)
     try {
       const res = await fetch('/api/telegram/test-broadcast', { method: 'POST' })
-      const json = await res.json()
-      if (res.ok) alert(`성공적으로 발송했습니다! (성공: ${json.sent}/${json.total})`)
-      else alert(`발송 실패: ${json.error}`)
-    } catch (error) {
-      console.error(error)
-      alert('오류가 발생했습니다.')
-    }
+      if (res.ok) alert('성공')
+      else alert('실패')
+    } catch (e) { alert('오류') }
     setSendingTest(false)
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 pb-6 border-b">
+    <div className="max-w-4xl mx-auto p-6 space-y-10">
+      {/* 헤더 */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">📢 뉴스 브리핑 센터</h1>
-          <p className="text-gray-600">
-            현재 <b>{subCount}명</b>의 구독자가 뉴스를 기다리고 있습니다.
-          </p>
+          <p className="text-gray-600">현재 <b>{subCount}명</b>의 구독자가 있습니다.</p>
         </div>
-        <button 
-          onClick={sendTestBroadcast}
-          disabled={sendingTest || subCount === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
-        >
-          {sendingTest ? '발송 중...' : '🔔 전체 테스트 발송'}
+        <button onClick={sendTestBroadcast} disabled={sendingTest || subCount === 0} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">
+          {sendingTest ? '...' : '🔔 연결 테스트 (Ping)'}
         </button>
       </div>
-      
-      {/* 입력 폼 (2단 구조로 변경) */}
-      <div className="bg-gray-50 p-5 rounded-2xl mb-8 border border-gray-100">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">새로운 뉴스 주제 등록</h3>
-        <form onSubmit={addKeyword} className="flex flex-col md:flex-row gap-3">
-          {/* 1. 수집 키워드 */}
-          <div className="flex-1">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="수집 검색어 (예: 한화투자증권)"
-              className="w-full p-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
-            />
-            <p className="text-xs text-gray-500 mt-1 pl-1">
-              * 네이버 뉴스에서 검색할 단어입니다.
-            </p>
-          </div>
 
-          {/* 2. 알림 조건 (필터) */}
-          <div className="flex-1">
-            <input
-              type="text"
-              value={filterInput}
-              onChange={(e) => setFilterInput(e.target.value)}
-              placeholder="알림 조건 (선택사항, 예: 이벤트, 실적)"
-              className="w-full p-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-green-500 outline-none transition"
-            />
-            <p className="text-xs text-gray-500 mt-1 pl-1">
-              * 비워두면 모든 뉴스를 알림으로 보냅니다.
-            </p>
-          </div>
-
-          <button 
-            type="submit" 
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-sm transition whitespace-nowrap h-[50px]"
-          >
-            등록
-          </button>
-        </form>
-      </div>
-
-      <h2 className="text-lg font-bold text-gray-800 mb-4 pl-2 border-l-4 border-blue-500">
-        편성된 키워드 ({keywords.length})
-      </h2>
-      
-      {/* 키워드 목록 */}
-      <ul className="grid gap-3">
-        {keywords.map((item) => (
-          <li key={item.id} className="flex flex-col md:flex-row md:justify-between md:items-center p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition group gap-4">
-            
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">수집</span>
-                <KeywordVisualizer text={item.keyword} />
-              </div>
-              
-              {/* 알림 조건 표시 부분 */}
-              <div className="flex items-center gap-2 text-sm">
-                <span className={`text-xs font-bold px-2 py-1 rounded ${item.alert_filter ? 'text-green-700 bg-green-100' : 'text-gray-500 bg-gray-100'}`}>
-                  알림
-                </span>
-                
-                {item.alert_filter ? (
-                  <div className="flex items-center gap-1 text-gray-700">
-                    <span>조건:</span>
-                    <span className="font-semibold text-green-700 bg-green-50 px-1 rounded">
-                      {item.alert_filter.split(',').join(' OR ')}
-                    </span>
-                    <span>포함 시 발송</span>
-                  </div>
-                ) : (
-                  <span className="text-gray-500">조건 없음 (모든 뉴스 발송)</span>
-                )}
-              </div>
-
-              <span className="text-[10px] text-gray-400 font-mono ml-1">
-                {new Date(item.created_at).toLocaleDateString()} 등록
-              </span>
+      {/* 1. 키워드 관리 섹션 */}
+      <section>
+        <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-blue-500 pl-3">뉴스 키워드 관리</h2>
+        
+        {/* 등록 폼 */}
+        <div className="bg-blue-50 p-5 rounded-2xl mb-6 border border-blue-100">
+          <form onSubmit={addKeyword} className="flex flex-col md:flex-row gap-3">
+            <div className="flex-1">
+              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="수집 검색어 (예: 한화투자증권)" className="w-full p-3 border border-gray-300 rounded-xl" />
             </div>
-            
-            <button 
-              onClick={() => deleteKeyword(item.id)} 
-              className="text-gray-300 hover:text-red-500 p-2 rounded-full hover:bg-red-50 transition self-end md:self-center"
-              title="삭제"
+            <div className="flex-1">
+              <input type="text" value={filterInput} onChange={(e) => setFilterInput(e.target.value)} placeholder="알림 조건 (예: 이벤트, 실적)" className="w-full p-3 border border-gray-300 rounded-xl" />
+            </div>
+            <button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 whitespace-nowrap">등록</button>
+          </form>
+        </div>
+
+        {/* 목록 */}
+        <ul className="grid gap-3">
+          {keywords.map((item) => (
+            <li key={item.id} className="p-5 bg-white border border-gray-100 rounded-xl shadow-sm">
+              {editingId === item.id ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex gap-3">
+                    <input value={editKeyword} onChange={(e) => setEditKeyword(e.target.value)} className="flex-1 p-2 border rounded" />
+                    <input value={editFilter} onChange={(e) => setEditFilter(e.target.value)} placeholder="조건 없음" className="flex-1 p-2 border rounded" />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setEditingId(null)} className="px-3 py-1 bg-gray-100 rounded">취소</button>
+                    <button onClick={saveEdit} className="px-3 py-1 bg-blue-600 text-white rounded">저장</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center">
+                  <div className="flex flex-col gap-2">
+                     <div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-bold">수집</span> <KeywordVisualizer text={item.keyword} /></div>
+                     <div className="flex items-center gap-2 text-sm">
+                        <span className={`text-xs font-bold px-2 py-1 rounded ${item.alert_filter ? 'text-green-700 bg-green-100' : 'text-gray-500 bg-gray-100'}`}>알림</span>
+                        {item.alert_filter ? <span className="font-semibold text-green-700">{item.alert_filter}</span> : <span className="text-gray-500">전체 발송</span>}
+                     </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => startEditing(item)} className="p-2 text-gray-400 hover:text-blue-500">✏️</button>
+                    <button onClick={() => deleteKeyword(item.id)} className="p-2 text-gray-400 hover:text-red-500">🗑️</button>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* 2. 전체 공지 발송 섹션 (NEW) */}
+      <section className="pt-6 border-t border-gray-200">
+        <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-red-500 pl-3">
+          📢 전체 구독자 공지 발송
+        </h2>
+        
+        <div className="bg-red-50 p-6 rounded-2xl border border-red-100">
+          <p className="text-sm text-red-600 mb-3 font-semibold">
+            * 주의: 현재 활성화된 {subCount}명의 구독자 전원에게 메시지가 발송됩니다.
+          </p>
+          
+          <textarea
+            value={announcement}
+            onChange={(e) => setAnnouncement(e.target.value)}
+            placeholder="공지 내용을 입력하세요... (HTML 태그 사용 가능: <b>굵게</b>, <i>기울임</i> 등)"
+            className="w-full h-32 p-4 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none mb-3 resize-none bg-white"
+          />
+          
+          <div className="flex justify-end">
+            <button
+              onClick={sendAnnouncement}
+              disabled={isSendingAnnouncement || !announcement.trim()}
+              className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
+              {isSendingAnnouncement ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  전송 중...
+                </>
+              ) : (
+                '📢 공지 보내기'
+              )}
             </button>
-          </li>
-        ))}
-        {keywords.length === 0 && (
-          <li className="text-center text-gray-400 py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-            등록된 키워드가 없습니다.<br/>위에서 새로운 뉴스 주제를 편성해보세요.
-          </li>
-        )}
-      </ul>
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
