@@ -1,10 +1,9 @@
-// src/app/news/alerts/page.tsx
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
-// --- 키워드 시각화 컴포넌트 ---
+// --- 키워드 시각화 컴포넌트 (기존 유지) ---
 const KeywordVisualizer = ({ text }: { text: string }) => {
   if (text.includes('|')) {
     const parts = text.split('|').map(t => t.trim())
@@ -37,15 +36,18 @@ const KeywordVisualizer = ({ text }: { text: string }) => {
   )
 }
 
+// --- 인터페이스 수정: alert_filter 추가 ---
 interface AlertKeyword {
   id: string
   keyword: string
+  alert_filter: string | null // 알림 조건 (null이면 전체 알림)
   created_at: string
 }
 
 export default function NewsAlertPage() {
   const [keywords, setKeywords] = useState<AlertKeyword[]>([])
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState('')        // 수집 키워드
+  const [filterInput, setFilterInput] = useState('') // 알림 필터 (추가됨)
   const [subCount, setSubCount] = useState(0)
   const [sendingTest, setSendingTest] = useState(false)
 
@@ -55,7 +57,7 @@ export default function NewsAlertPage() {
   )
 
   const fetchData = useCallback(async () => {
-    // 키워드 목록
+    // 키워드 목록 (alert_filter 포함 조회)
     const { data: kData } = await supabase
       .from('alert_keywords')
       .select('*')
@@ -87,6 +89,7 @@ export default function NewsAlertPage() {
 
     const { error } = await supabase.from('alert_keywords').insert({ 
       keyword: input.trim(),
+      alert_filter: filterInput.trim() || null, // 비어있으면 null로 저장
       created_by: session.user.id 
     })
     
@@ -95,6 +98,7 @@ export default function NewsAlertPage() {
       else alert('오류가 발생했습니다: ' + error.message)
     } else {
       setInput('')
+      setFilterInput('') // 필터 입력창도 초기화
       fetchData()
     }
   }
@@ -116,7 +120,7 @@ export default function NewsAlertPage() {
       const json = await res.json()
       if (res.ok) alert(`성공적으로 발송했습니다! (성공: ${json.sent}/${json.total})`)
       else alert(`발송 실패: ${json.error}`)
-    } catch (error) { // 여기서 'e' 대신 'error'를 쓰거나 사용하지 않음
+    } catch (error) {
       console.error(error)
       alert('오류가 발생했습니다.')
     }
@@ -124,7 +128,7 @@ export default function NewsAlertPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6">
+    <div className="max-w-4xl mx-auto p-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 pb-6 border-b">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">📢 뉴스 브리핑 센터</h1>
@@ -135,31 +139,51 @@ export default function NewsAlertPage() {
         <button 
           onClick={sendTestBroadcast}
           disabled={sendingTest || subCount === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm"
         >
           {sendingTest ? '발송 중...' : '🔔 전체 테스트 발송'}
         </button>
       </div>
       
-      {/* 입력 폼 */}
-      <form onSubmit={addKeyword} className="flex gap-2 mb-4">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="예: 삼성전자 실적 (띄어쓰기=AND, |=OR)"
-          className="flex-1 p-4 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
-        />
-        <button 
-          type="submit" 
-          className="bg-blue-600 text-white px-8 rounded-xl font-bold hover:bg-blue-700 shadow-sm transition"
-        >
-          등록
-        </button>
-      </form>
-      
-      <div className="text-xs text-gray-500 mb-10 pl-2">
-        Tip: <b>삼성전자 실적</b> (둘 다 포함), <b>애플 | 아이폰</b> (둘 중 하나 포함)
+      {/* 입력 폼 (2단 구조로 변경) */}
+      <div className="bg-gray-50 p-5 rounded-2xl mb-8 border border-gray-100">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">새로운 뉴스 주제 등록</h3>
+        <form onSubmit={addKeyword} className="flex flex-col md:flex-row gap-3">
+          {/* 1. 수집 키워드 */}
+          <div className="flex-1">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="수집 검색어 (예: 한화투자증권)"
+              className="w-full p-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none transition"
+            />
+            <p className="text-xs text-gray-500 mt-1 pl-1">
+              * 네이버 뉴스에서 검색할 단어입니다.
+            </p>
+          </div>
+
+          {/* 2. 알림 조건 (필터) */}
+          <div className="flex-1">
+            <input
+              type="text"
+              value={filterInput}
+              onChange={(e) => setFilterInput(e.target.value)}
+              placeholder="알림 조건 (선택사항, 예: 이벤트, 실적)"
+              className="w-full p-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-green-500 outline-none transition"
+            />
+            <p className="text-xs text-gray-500 mt-1 pl-1">
+              * 비워두면 모든 뉴스를 알림으로 보냅니다.
+            </p>
+          </div>
+
+          <button 
+            type="submit" 
+            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-sm transition whitespace-nowrap h-[50px]"
+          >
+            등록
+          </button>
+        </form>
       </div>
 
       <h2 className="text-lg font-bold text-gray-800 mb-4 pl-2 border-l-4 border-blue-500">
@@ -169,17 +193,41 @@ export default function NewsAlertPage() {
       {/* 키워드 목록 */}
       <ul className="grid gap-3">
         {keywords.map((item) => (
-          <li key={item.id} className="flex justify-between items-center p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition group">
-            <div className="flex flex-col gap-1">
-              <KeywordVisualizer text={item.keyword} />
-              <span className="text-[10px] text-gray-400 font-mono mt-1 ml-1">
+          <li key={item.id} className="flex flex-col md:flex-row md:justify-between md:items-center p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition group gap-4">
+            
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">수집</span>
+                <KeywordVisualizer text={item.keyword} />
+              </div>
+              
+              {/* 알림 조건 표시 부분 */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`text-xs font-bold px-2 py-1 rounded ${item.alert_filter ? 'text-green-700 bg-green-100' : 'text-gray-500 bg-gray-100'}`}>
+                  알림
+                </span>
+                
+                {item.alert_filter ? (
+                  <div className="flex items-center gap-1 text-gray-700">
+                    <span>조건:</span>
+                    <span className="font-semibold text-green-700 bg-green-50 px-1 rounded">
+                      {item.alert_filter.split(',').join(' OR ')}
+                    </span>
+                    <span>포함 시 발송</span>
+                  </div>
+                ) : (
+                  <span className="text-gray-500">조건 없음 (모든 뉴스 발송)</span>
+                )}
+              </div>
+
+              <span className="text-[10px] text-gray-400 font-mono ml-1">
                 {new Date(item.created_at).toLocaleDateString()} 등록
               </span>
             </div>
             
             <button 
               onClick={() => deleteKeyword(item.id)} 
-              className="text-gray-300 hover:text-red-500 p-2 rounded-full hover:bg-red-50 transition"
+              className="text-gray-300 hover:text-red-500 p-2 rounded-full hover:bg-red-50 transition self-end md:self-center"
               title="삭제"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

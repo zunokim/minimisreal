@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchNaverNews } from '@/lib/news/ingestNaver' 
 
-// Vercel 타임아웃 60초
 export const maxDuration = 60 
 export const dynamic = 'force-dynamic'
 
@@ -11,7 +10,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// HTML 특수문자 이스케이프
 function escapeHtml(text: string) {
   return text
     .replace(/&/g, "&amp;")
@@ -21,7 +19,6 @@ function escapeHtml(text: string) {
     .replace(/'/g, "&#039;");
 }
 
-// 텔레그램 발송 함수
 async function broadcastMessage(subscribers: string[], text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return [{ status: 'error', message: 'No Bot Token' }]
@@ -32,27 +29,16 @@ async function broadcastMessage(subscribers: string[], text: string) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: chatId,
-          text: text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true
+          chat_id: chatId, text: text, parse_mode: 'HTML', disable_web_page_preview: true
         }),
       })
-      
       const data = await res.json()
-      
-      if (!res.ok) {
-        console.error(`Telegram Error (${chatId}):`, data)
-        return { chatId, success: false, error: data }
-      }
+      if (!res.ok) return { chatId, success: false, error: data }
       return { chatId, success: true }
-
     } catch (e: any) {
-      console.error(`Network Error (${chatId}):`, e)
       return { chatId, success: false, error: e.message }
     }
   }))
-  
   return results
 }
 
@@ -63,29 +49,27 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data: keywordData } = await supabase.from('alert_keywords').select('keyword')
-    const keywords = keywordData?.map(k => k.keyword) || []
+    const { data: keywordData } = await supabase.from('alert_keywords').select('keyword, alert_filter')
+    const keywords = keywordData || []
 
     const { data: subsData } = await supabase.from('telegram_subscribers').select('chat_id').eq('is_active', true)
     const subscriberIds = subsData?.map(s => s.chat_id) || []
 
-    if (keywords.length === 0 || subscriberIds.length === 0) {
-      return NextResponse.json({ message: 'No keywords or subscribers' })
-    }
-
     const debugLogs: any[] = []
 
-    for (const keyword of keywords) {
+    for (const kItem of keywords) {
+      const { keyword, alert_filter } = kItem
       const articles = await fetchNaverNews(keyword)
-      const newArticlesToSend: any[] = []
+      
+      const articlesToSave: any[] = [] 
+      const articlesToSend: any[] = [] 
 
       for (const article of articles) {
-        // [테스트] 시간 넉넉히 (실제 운영 시 20~60분 권장)
+        // [테스트 팁] 평소엔 20~60분, 테스트 시 720분
         const pubDate = new Date(article.pubDate)
         const diffMinutes = (new Date().getTime() - pubDate.getTime()) / (1000 * 60)
-
-        // 테스트용: 720분(12시간) / 운영용: 60분
-        if (diffMinutes > 720) continue 
+        
+        if (diffMinutes > 60) continue 
 
         const { data: existing } = await supabase
           .from('news_articles')
@@ -96,67 +80,69 @@ export async function GET(request: Request) {
         if (!existing) {
            let rawTitle = article.title.replace(/<[^>]*>?/gm, '');
            const safeTitle = escapeHtml(rawTitle);
-
-           newArticlesToSend.push({
-             safeTitle,
-             rawTitle,
-             link: article.link,
+           
+           const itemData = {
+             safeTitle, rawTitle, link: article.link,
              time: pubDate.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}),
-             desc: article.description,
-             pubDateStr: pubDate.toISOString()
-           })
+             desc: article.description, pubDateStr: pubDate.toISOString()
+           }
+
+           articlesToSave.push(itemData)
+
+           // --- [변경] 필터 매칭 로직 강화 ---
+           let shouldNotify = true
+           let matchedFilters: string[] = [] // 어떤 키워드에 걸렸는지 저장
+
+           if (alert_filter) {
+             const filterKeywords = alert_filter.split(',').map((s: string) => s.trim())
+             const targetText = (rawTitle + article.description).toLowerCase()
+             
+             // 하나라도 포함된 게 있는지 찾아서 저장
+             matchedFilters = filterKeywords.filter((f: string) => targetText.includes(f.toLowerCase()))
+             shouldNotify = matchedFilters.length > 0
+           }
+
+           if (shouldNotify) {
+             // 데이터에 걸린 키워드 정보(matchedFilters)를 같이 넣음
+             articlesToSend.push({ ...itemData, triggers: matchedFilters })
+           }
         }
       }
 
-      // 수집된 새 기사가 있다면
-      if (newArticlesToSend.length > 0) {
-        // [수정] 15개씩 잘라서 보내기 (메시지 길이 제한 방지)
+      if (articlesToSave.length > 0) {
+        await supabase.from('news_articles').insert(articlesToSave.map(item => ({
+            title: item.rawTitle, content: item.desc, publisher: 'Naver Search',
+            source_url: item.link, published_at: item.pubDateStr,
+        })))
+      }
+
+      if (articlesToSend.length > 0) {
         const CHUNK_SIZE = 15;
-        
-        for (let i = 0; i < newArticlesToSend.length; i += CHUNK_SIZE) {
-            const chunk = newArticlesToSend.slice(i, i + CHUNK_SIZE);
-            
-            let message = `📢 <b>[${keyword}] 새 소식 (${i + 1}~${i + chunk.length} / 전체 ${newArticlesToSend.length}건)</b>\n\n`
+        for (let i = 0; i < articlesToSend.length; i += CHUNK_SIZE) {
+            const chunk = articlesToSend.slice(i, i + CHUNK_SIZE);
+            let message = `📢 <b>[${keyword}] 관련 소식 (${chunk.length}건)</b>\n\n`
             
             chunk.forEach((item, index) => {
-              // 번호는 전체 리스트 기준
               message += `${i + index + 1}. <a href="${item.link}">${item.safeTitle}</a>\n`
+              
+              // --- [변경] 감지된 키워드 표시 ---
+              // 알림 조건(triggers)이 존재하면 표시, 없으면(전체수집) 표시 안 함
+              if (item.triggers && item.triggers.length > 0) {
+                  message += `   🎯 <i>감지: ${item.triggers.join(', ')}</i>\n`
+              }
+              
               message += `   <i>(${item.time})</i>\n\n`
             })
 
-            // 발송
             const sendResult = await broadcastMessage(subscriberIds, message)
-            
-            debugLogs.push({
-                keyword,
-                batch: `${i/CHUNK_SIZE + 1}번째 묶음`,
-                sent_count: chunk.length,
-                result: sendResult
-            })
-        }
-
-        // [수정] 발송한 '모든' 기사 DB 저장
-        const itemsToInsert = newArticlesToSend.map(item => ({
-            title: item.rawTitle,
-            content: item.desc,
-            publisher: 'Naver Search',
-            source_url: item.link,
-            published_at: item.pubDateStr,
-        }))
-        
-        if (itemsToInsert.length > 0) {
-            await supabase.from('news_articles').insert(itemsToInsert)
+            debugLogs.push({ keyword, sent: articlesToSend.length, result: sendResult })
         }
       }
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      logs: debugLogs 
-    })
+    return NextResponse.json({ success: true, logs: debugLogs })
 
   } catch (error: any) {
-    console.error('Final Error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
