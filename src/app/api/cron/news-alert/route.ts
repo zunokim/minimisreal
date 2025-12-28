@@ -1,3 +1,5 @@
+//src\app\api\cron\news-alert\route.ts
+
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchNaverNews } from '@/lib/news/ingestNaver' 
