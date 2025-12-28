@@ -4,13 +4,32 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { CalendarDays, Newspaper } from 'lucide-react'
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { CalendarDays, Newspaper, Search } from 'lucide-react'
 
-// 서스펜스 (Next.js 빌드용)
+// 하이라이팅 컴포넌트 (검색어가 있으면 옅은 주황색 배경)
+const HighlightText = ({ text, keyword }: { text: string, keyword: string }) => {
+  if (!keyword || !text) return <>{text}</>
+  
+  const parts = text.split(new RegExp(`(${keyword})`, 'gi'))
+  return (
+    <>
+      {parts.map((part, i) => 
+        part.toLowerCase() === keyword.toLowerCase() ? (
+          <span key={i} className="bg-orange-100 text-orange-700 font-bold px-0.5 rounded">
+            {part}
+          </span>
+        ) : (
+          part
+        )
+      )}
+    </>
+  )
+}
+
 export default function DailySummaryPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-center">데이터를 불러오는 중...</div>}>
+    <Suspense fallback={<div className="p-10 text-center text-orange-600">데이터를 불러오는 중...</div>}>
       <SummaryContent />
     </Suspense>
   )
@@ -18,8 +37,9 @@ export default function DailySummaryPage() {
 
 function SummaryContent() {
   const searchParams = useSearchParams()
-  const keyword = searchParams.get('keyword') || ''
   const dateParam = searchParams.get('date') || ''
+  // URL에 키워드가 없으면 기본적으로 '한화'를 강조 (원하시면 변경 가능)
+  const [keyword, setKeyword] = useState('한화') 
   
   const [articles, setArticles] = useState<any[]>([])
   const [chartData, setChartData] = useState<any[]>([])
@@ -31,71 +51,71 @@ function SummaryContent() {
   )
 
   useEffect(() => {
-    if (!keyword || !dateParam) return
+    if (!dateParam) return
 
     const fetchData = async () => {
       setLoading(true)
 
-      // 1. 오늘의 뉴스 가져오기
-      const startDate = `${dateParam}T00:00:00`
-      const endDate = `${dateParam}T23:59:59`
+      // [핵심] 클라이언트에서도 타임존(KST -> UTC) 정확히 계산
+      // dateParam (예: 2025-12-29) -> 한국 00시 -> UTC 전날 15시
+      const targetDate = new Date(dateParam)
+      const kstOffset = 9 * 60 * 60 * 1000
+      
+      // 한국 시간 0시 0분 0초에 해당하는 UTC 타임스탬프
+      const startTimestamp = targetDate.getTime() - kstOffset
+      const startUTC = new Date(startTimestamp).toISOString()
+      
+      // 한국 시간 23시 59분 59초에 해당하는 UTC 타임스탬프
+      const endTimestamp = targetDate.getTime() - kstOffset + (24 * 60 * 60 * 1000) - 1
+      const endUTC = new Date(endTimestamp).toISOString()
 
+      // 1. 오늘의 뉴스 가져오기 (전체)
       const { data: todayNews } = await supabase
         .from('news_articles')
         .select('*')
-        .ilike('title', `%${keyword}%`)
-        .gte('fetched_at', startDate)
-        .lte('fetched_at', endDate)
+        .gte('fetched_at', startUTC)
+        .lte('fetched_at', endUTC)
         .order('published_at', { ascending: false })
 
       if (todayNews) setArticles(todayNews)
 
-      // 2. 최근 7일간 통계 데이터 만들기
-      // 오늘 기준으로 7일 전 날짜 계산
-      const endObj = new Date(dateParam)
-      const startObj = new Date(endObj)
-      startObj.setDate(endObj.getDate() - 6) // 7일간 (오늘 포함)
+      // 2. 그래프 데이터 (최근 7일)
+      // 7일 전 UTC 시작 시간 계산
+      const sevenDaysAgoTimestamp = startTimestamp - (6 * 24 * 60 * 60 * 1000)
+      const sevenDaysAgoUTC = new Date(sevenDaysAgoTimestamp).toISOString()
 
-      const startStatStr = startObj.toISOString().split('T')[0]
-      const endStatStr = `${dateParam}T23:59:59`
-
-      // 날짜별 개수를 세기 위해 해당 기간의 'fetched_at'만 가져옴
       const { data: statsRaw } = await supabase
         .from('news_articles')
         .select('fetched_at')
-        .ilike('title', `%${keyword}%`)
-        .gte('fetched_at', `${startStatStr}T00:00:00`)
-        .lte('fetched_at', endStatStr)
+        .gte('fetched_at', sevenDaysAgoUTC)
+        .lte('fetched_at', endUTC)
 
-      // 날짜별 그룹핑 로직
+      // 날짜별 그룹핑
       const dailyCounts: Record<string, number> = {}
       
-      // 초기화 (0건인 날짜도 표시하기 위해)
-      for (let d = new Date(startObj); d <= endObj; d.setDate(d.getDate() + 1)) {
-        // 한국 시간 보정 (간단하게 문자열 처리)
-        const dStr = d.toISOString().split('T')[0]
-        dailyCounts[dStr] = 0
+      // 7일치 키 초기화
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startTimestamp - ((6 - i) * 24 * 60 * 60 * 1000))
+        // UTC 시간을 다시 한국 날짜 문자열로 변환 (표시용)
+        const kstD = new Date(d.getTime() + kstOffset)
+        const dateKey = kstD.toISOString().split('T')[0]
+        dailyCounts[dateKey] = 0
       }
 
-      // 카운팅
       if (statsRaw) {
         statsRaw.forEach((item: any) => {
-          // DB 시간이 UTC일 수 있으므로 한국 시간으로 변환 후 카운트
-          const kstDate = new Date(new Date(item.fetched_at).getTime() + (9 * 60 * 60 * 1000))
-          const dateKey = kstDate.toISOString().split('T')[0]
-          
-          if (dailyCounts[dateKey] !== undefined) {
-            dailyCounts[dateKey]++
-          }
+          // DB 시간(UTC) -> 한국 시간 변환 후 카운트
+          const itemKST = new Date(new Date(item.fetched_at).getTime() + kstOffset)
+          const dateKey = itemKST.toISOString().split('T')[0]
+          if (dailyCounts[dateKey] !== undefined) dailyCounts[dateKey]++
         })
       }
 
-      // 차트용 배열로 변환
       const chartArr = Object.keys(dailyCounts).map(dateKey => ({
-        date: dateKey.slice(5), // "12-26" 형태로 자름
+        date: dateKey.slice(5), // "12-29"
         fullDate: dateKey,
         count: dailyCounts[dateKey],
-        isToday: dateKey === dateParam // 오늘 날짜 표시용
+        isToday: dateKey === dateParam
       }))
 
       setChartData(chartArr)
@@ -103,41 +123,55 @@ function SummaryContent() {
     }
 
     fetchData()
-  }, [keyword, dateParam, supabase])
+  }, [dateParam, supabase])
 
-  if (!keyword || !dateParam) {
+  if (!dateParam) {
     return <div className="p-10 text-center text-gray-500">잘못된 접근입니다.</div>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-10">
+    <div className="min-h-screen bg-orange-50/30 pb-10 font-sans">
       <div className="max-w-3xl mx-auto p-4 md:p-6">
         
         {/* 헤더 */}
-        <header className="mb-6 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
-            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">{dateParam}</span>
-            <span>일일 브리핑</span>
+        <header className="mb-6 bg-white p-6 rounded-2xl shadow-sm border border-orange-100">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+            <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-bold">{dateParam}</span>
+            <span>뉴스 브리핑</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">
-            📰 <span className="text-blue-600">{keyword}</span> 뉴스 리포트
+            📰 <span className="text-orange-600">오늘의 뉴스</span> 리포트
           </h1>
         </header>
 
+        {/* 검색 필터 (하이라이트용) */}
+        <div className="mb-6 flex gap-2">
+            <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input 
+                    type="text" 
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    placeholder="결과 내 검색 (강조할 단어)"
+                    className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none text-sm shadow-sm"
+                />
+            </div>
+        </div>
+
         {loading ? (
           <div className="space-y-4 animate-pulse">
-            <div className="h-40 bg-gray-200 rounded-2xl" />
-            <div className="h-24 bg-gray-200 rounded-xl" />
-            <div className="h-24 bg-gray-200 rounded-xl" />
+            <div className="h-40 bg-white rounded-2xl" />
+            <div className="h-24 bg-white rounded-xl" />
+            <div className="h-24 bg-white rounded-xl" />
           </div>
         ) : (
           <div className="space-y-6">
             
             {/* 1. 주간 트렌드 차트 */}
-            <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <section className="bg-white p-6 rounded-2xl shadow-sm border border-orange-100">
               <div className="flex items-center gap-2 mb-4">
                 <CalendarDays className="w-5 h-5 text-gray-500" />
-                <h2 className="text-lg font-bold text-gray-800">최근 7일 기사량 추이</h2>
+                <h2 className="text-lg font-bold text-gray-800">최근 7일 기사량</h2>
               </div>
               
               <div className="h-[200px] w-full">
@@ -145,35 +179,34 @@ function SummaryContent() {
                   <BarChart data={chartData}>
                     <XAxis 
                       dataKey="date" 
-                      tick={{fontSize: 12}} 
+                      tick={{fontSize: 12, fill: '#666'}} 
                       axisLine={false} 
                       tickLine={false} 
                     />
                     <Tooltip 
-                      cursor={{fill: '#f3f4f6'}}
+                      cursor={{fill: '#fff7ed'}}
                       contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
                     />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                       {chartData.map((entry, index) => (
                         <Cell 
                           key={`cell-${index}`} 
-                          fill={entry.isToday ? '#2563eb' : '#cbd5e1'} // 오늘은 파란색, 나머지는 회색
+                          fill={entry.isToday ? '#ea580c' : '#fdba74'} // 오늘은 진한 주황, 나머지는 연한 주황
                         />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <p className="text-xs text-center text-gray-400 mt-2">
-                * 오늘은 <span className="text-blue-600 font-bold">{articles.length}건</span>의 뉴스가 수집되었습니다.
-              </p>
             </section>
 
             {/* 2. 뉴스 리스트 */}
             <section>
-              <div className="flex items-center gap-2 mb-3 px-2">
-                <Newspaper className="w-5 h-5 text-gray-500" />
-                <h2 className="text-lg font-bold text-gray-800">오늘의 뉴스 ({articles.length})</h2>
+              <div className="flex items-center justify-between mb-3 px-2">
+                <div className="flex items-center gap-2">
+                    <Newspaper className="w-5 h-5 text-gray-500" />
+                    <h2 className="text-lg font-bold text-gray-800">뉴스 목록 ({articles.length})</h2>
+                </div>
               </div>
 
               {articles.length === 0 ? (
@@ -188,17 +221,19 @@ function SummaryContent() {
                       href={item.source_url} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="block p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md hover:border-blue-300 transition group"
+                      className="block p-5 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md hover:border-orange-300 transition group"
                     >
-                      <h3 className="text-base font-bold text-gray-800 group-hover:text-blue-600 mb-2 line-clamp-2 leading-snug">
-                        {item.title}
+                      <h3 className="text-base font-bold text-gray-800 group-hover:text-orange-600 mb-2 line-clamp-2 leading-snug">
+                        <HighlightText text={item.title} keyword={keyword} />
                       </h3>
                       <p className="text-sm text-gray-500 line-clamp-2 mb-3">
-                        {item.content ? item.content.replace(/<[^>]*>?/gm, '') : ''}
+                        {item.content ? (
+                           <HighlightText text={item.content.replace(/<[^>]*>?/gm, '')} keyword={keyword} />
+                        ) : ''}
                       </p>
                       <div className="flex justify-between items-center text-xs text-gray-400 border-t border-gray-50 pt-3 mt-1">
                         <span className="bg-gray-100 px-2 py-1 rounded text-gray-500 font-medium">
-                          {item.publisher || '뉴스'}
+                          {item.publisher || '네이버 뉴스'}
                         </span>
                         <span>
                           {new Date(item.published_at || item.fetched_at).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'})}
