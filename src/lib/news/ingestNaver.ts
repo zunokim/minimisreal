@@ -10,7 +10,20 @@ export interface NewsArticle {
   fullContent?: string;
 }
 
-// [변경] start 파라미터 추가 (기본값 1)
+// 💡 주요 언론사별 본문이 들어있는 ID/Class 목록
+const CONTENT_SELECTORS = [
+    '#dic_area',                // 네이버 뉴스
+    '#article-view-content-div', // 연합인포맥스, 일부 지방지
+    '.article_body',            // 일반적인 언론사 공통
+    '#news_body_id',            // 일부 경제지
+    '.news_view',               // 
+    '#txt_area',                // 한국경제 등
+    '.view_txt',                // 
+    '.cnt_view',                // 
+    '#articleBody',             // 
+    '.article-body',            // 
+];
+
 export async function fetchNaverNews(keyword: string, display: number = 10, start: number = 1): Promise<NewsArticle[]> {
   const clientId = process.env.NAVER_CLIENT_ID;
   const clientSecret = process.env.NAVER_CLIENT_SECRET;
@@ -20,7 +33,6 @@ export async function fetchNaverNews(keyword: string, display: number = 10, star
     return [];
   }
 
-  // [변경] start 파라미터 적용
   const apiUrl = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(keyword)}&display=${display}&start=${start}&sort=date`;
   
   try {
@@ -34,7 +46,6 @@ export async function fetchNaverNews(keyword: string, display: number = 10, star
     const data = await res.json();
     const items = data.items || [];
 
-    // 본문 스크래핑 (병렬 처리)
     const detailedArticles = await Promise.all(
       items.map(async (item: any) => {
         const link = item.link;
@@ -45,30 +56,44 @@ export async function fetchNaverNews(keyword: string, display: number = 10, star
             
             if (html) {
                 const $ = cheerio.load(html);
-                $('script').remove();
-                $('style').remove();
-                $('nav').remove();
-                $('header').remove();
-                $('footer').remove();
                 
-                let text = $('#dic_area').text();
-                if (!text || text.trim().length < 50) {
-                    text = '';
-                    $('p').each((_, el) => {
-                        const pText = $(el).text().trim();
-                        if (pText.length > 20) text += pText + ' ';
-                    });
+                // 불필요한 요소 제거 (광고, 스크립트 등)
+                $('script, style, nav, header, footer, .ad, .advertisement, iframe').remove();
+                
+                // [핵심 변경] 1. 유명한 본문 ID들을 순서대로 찔러봄
+                for (const selector of CONTENT_SELECTORS) {
+                    const text = $(selector).text().trim();
+                    // 텍스트가 50자 이상이면 본문으로 인정하고 루프 종료
+                    if (text.length > 50) {
+                        fullContent = text;
+                        break; 
+                    }
                 }
-                fullContent = text.trim();
+
+                // [핵심 변경] 2. 그래도 못 찾았으면 최후의 수단으로 <p> 태그 수집
+                if (!fullContent) {
+                    let pText = '';
+                    $('p').each((_, el) => {
+                        const t = $(el).text().trim();
+                        // 너무 짧은 건 메뉴/링크일 확률 높음 -> 제외
+                        if (t.length > 20) {
+                            pText += t + ' ';
+                        }
+                    });
+                    if (pText.length > 50) fullContent = pText.trim();
+                }
             }
         }
+
+        // 본문을 못 구했으면 요약문(description)이라도 씀
+        const finalContent = fullContent || item.description.replace(/<[^>]*>?/gm, '');
 
         return {
           title: item.title.replace(/<[^>]*>?/gm, ''),
           link: item.link,
           description: item.description.replace(/<[^>]*>?/gm, ''),
           pubDate: item.pubDate,
-          fullContent: fullContent || item.description.replace(/<[^>]*>?/gm, '') 
+          fullContent: finalContent
         };
       })
     );
@@ -81,4 +106,5 @@ export async function fetchNaverNews(keyword: string, display: number = 10, star
   }
 }
 
+// 호환성 유지
 export const ingestNaverNews = fetchNaverNews;
