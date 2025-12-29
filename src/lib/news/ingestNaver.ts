@@ -1,190 +1,94 @@
-import crypto from 'node:crypto'
-import * as cheerio from 'cheerio'
-import type { SupabaseClient } from '@supabase/supabase-js'
+// src/lib/news/ingestNaver.ts
+import * as cheerio from 'cheerio';
+import { fetchHtml } from '@/lib/fetchHtml'; // 위에서 만든 함수 import
 
-const NAVER_ENDPOINT = 'https://openapi.naver.com/v1/search/news.json'
-const BASE_QUERY = '한화투자증권'
-const DISPLAY = 100
-const SORT = 'date'
-const USER_AGENT = 'miniMIS/NewsFetcher (+https://example.com)'
-
-// --- [추가] 외부에서 사용할 인터페이스 정의 ---
-export interface NaverNewsItem {
-  title: string
-  originallink: string
-  link: string
-  description: string
-  pubDate: string
+// 뉴스 데이터 타입 정의
+export interface NewsArticle {
+  title: string;
+  link: string;
+  description: string; // 요약문 (API 제공)
+  pubDate: string;
+  fullContent?: string; // 우리가 긁어올 본문
 }
 
-function normalizeTitle(title: string) {
-  return (title || '')
-    .replace(/<b>|<\/b>/g, '')
-    .replace(/\[.*?\]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+export async function fetchNaverNews(keyword: string): Promise<NewsArticle[]> {
+  const clientId = process.env.NAVER_CLIENT_ID;
+  const clientSecret = process.env.NAVER_CLIENT_SECRET;
 
-function hashTitle(title: string) {
-  return crypto.createHash('sha1').update(title).digest('hex')
-}
-
-async function fetchArticleBody(url: string) {
-  try {
-    const res = await fetch(url, {
-      headers: { 'user-agent': USER_AGENT },
-      redirect: 'follow',
-      cache: 'no-store',
-    })
-    if (!res.ok) return null
-    const html = await res.text()
-    const $ = cheerio.load(html)
-
-    const naverBody = $('#newsct_article, #dic_area').text().trim()
-    if (naverBody.length > 120) return naverBody
-
-    const paragraphs = $('p').map((_, el) => $(el).text().trim()).get()
-    const longParas = paragraphs.filter(t => t.length > 50).slice(0, 10)
-    const combined = longParas.join('\n')
-    return combined.length > 80 ? combined : null
-  } catch {
-    return null
-  }
-}
-
-type IngestResult = { collected: number; inserted: number }
-
-type IngestOptions = {
-  /** 며칠 전까지 수집할지(기본 3일) */
-  days?: number
-  /** 페이지네이션 최대 페이지 수(기본 3). DISPLAY=100 기준 최대 300건 */
-  maxPages?: number
-  /** 검색어(기본 '한화투자증권') */
-  query?: string
-}
-
-/**
- * 기존 기능: 네이버 뉴스 수집 및 Supabase 저장
- */
-export async function ingestNaverNews(
-  supabase: SupabaseClient,
-  opts: IngestOptions = {}
-): Promise<IngestResult> {
-  const days = opts.days ?? 3
-  const maxPages = Math.max(1, opts.maxPages ?? 3)
-  const query = (opts.query ?? BASE_QUERY).trim() || BASE_QUERY
-
-  const since = new Date()
-  since.setDate(since.getDate() - days)
-
-  let collected = 0
-  let inserted = 0
-  let stop = false
-
-  for (let page = 0; page < maxPages && !stop; page++) {
-    const start = 1 + page * DISPLAY
-    if (start > 1000) break
-
-    const url =
-      `${NAVER_ENDPOINT}?query=${encodeURIComponent(query)}&display=${DISPLAY}` +
-      `&start=${start}&sort=${SORT}`
-
-    const apiRes = await fetch(url, {
-      headers: {
-        'X-Naver-Client-Id': process.env.NAVER_CLIENT_ID || '',
-        'X-Naver-Client-Secret': process.env.NAVER_CLIENT_SECRET || '',
-      },
-      cache: 'no-store',
-    })
-    if (!apiRes.ok) {
-      const text = await apiRes.text().catch(() => '')
-      throw new Error(`NAVER API: ${text || apiRes.statusText}`)
-    }
-    const json = (await apiRes.json()) as {
-      items?: Array<Partial<NaverNewsItem>>
-    }
-    const items = json.items || []
-    if (items.length === 0) break
-
-    const seen = new Set<string>()
-    for (const it of items) {
-      const title = normalizeTitle(it.title || '')
-      if (!title) continue
-      const title_hash = hashTitle(title)
-      if (seen.has(title_hash)) continue
-      seen.add(title_hash)
-
-      const url = (it.originallink || it.link || '').trim()
-      if (!url) continue
-
-      const pubISO = it.pubDate ? new Date(it.pubDate).toISOString() : null
-      const pubDate = pubISO ? new Date(pubISO) : null
-
-      if (pubDate && pubDate < since) {
-        stop = true
-        continue
-      }
-
-      let publisher: string | null = null
-      try { publisher = new URL(url).hostname.replace(/^www\./, '') } catch {}
-
-      let content: string | null = await fetchArticleBody(url)
-      if (!content && it.description) {
-        content = it.description.replace(/<b>|<\/b>/g, '').trim()
-      }
-
-      const { error } = await supabase
-        .from('news_articles')
-        .upsert(
-          {
-            title,
-            content,
-            publisher,
-            source_url: url,
-            published_at: pubISO,
-            title_hash,
-          },
-          { onConflict: 'source_url' }
-        )
-        .select('id')
-
-      collected++
-      if (!error) inserted++
-    }
+  if (!clientId || !clientSecret) {
+    console.error('Naver API Key is missing');
+    return [];
   }
 
-  return { collected, inserted }
-}
-
-/**
- * --- [추가] 뉴스 알림용 단순 조회 함수 ---
- * 단순히 키워드로 검색하여 결과 목록(items)만 반환합니다.
- */
-export async function fetchNaverNews(query: string): Promise<NaverNewsItem[]> {
-  const client_id = process.env.NAVER_CLIENT_ID
-  const client_secret = process.env.NAVER_CLIENT_SECRET
+  // 1. 네이버 검색 API 호출 (최신순 10개)
+  const apiUrl = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(keyword)}&display=10&sort=date`;
   
-  if (!client_id || !client_secret) {
-    throw new Error('Naver API keys missing')
+  try {
+    const res = await fetch(apiUrl, {
+      headers: {
+        'X-Naver-Client-Id': clientId,
+        'X-Naver-Client-Secret': clientSecret,
+      },
+    });
+
+    const data = await res.json();
+    const items = data.items || [];
+
+    // 2. 각 뉴스 링크에 들어가서 본문 스크래핑 (병렬 처리)
+    const detailedArticles = await Promise.all(
+      items.map(async (item: any) => {
+        const link = item.link; // 기사 원문 링크
+        let fullContent = '';
+
+        // API가 주는 description은 너무 짧으므로, 링크에 직접 접속해서 본문을 가져옴
+        if (link) {
+            const html = await fetchHtml(link); // [핵심] 인코딩 처리된 HTML 가져오기
+            
+            if (html) {
+                const $ = cheerio.load(html);
+                
+                // [본문 추출 로직]
+                // 사이트마다 구조가 달라서 완벽하진 않지만, 일반적으로 본문은 p 태그에 많음
+                // 불필요한 스크립트, 스타일 제거
+                $('script').remove();
+                $('style').remove();
+                $('nav').remove();
+                $('header').remove();
+                $('footer').remove();
+                
+                // 1차 시도: 네이버 뉴스라면 #dic_area (본문 ID)
+                let text = $('#dic_area').text();
+
+                // 2차 시도: 없다면 일반적인 <p> 태그 긁어오기
+                if (!text || text.trim().length < 50) {
+                    text = '';
+                    $('p').each((_, el) => {
+                        const pText = $(el).text().trim();
+                        // 너무 짧은 문장(메뉴명 등)은 제외
+                        if (pText.length > 20) {
+                            text += pText + ' ';
+                        }
+                    });
+                }
+                
+                fullContent = text.trim();
+            }
+        }
+
+        return {
+          title: item.title.replace(/<[^>]*>?/gm, ''), // 태그 제거
+          link: item.link,
+          description: item.description.replace(/<[^>]*>?/gm, ''),
+          pubDate: item.pubDate,
+          fullContent: fullContent || item.description.replace(/<[^>]*>?/gm, '') // 본문 실패하면 요약문이라도 저장
+        };
+      })
+    );
+
+    return detailedArticles;
+
+  } catch (e) {
+    console.error('Naver News API Error:', e);
+    return [];
   }
-
-  // 검색어 인코딩
-  const encText = encodeURIComponent(query)
-  // 최신순 정렬, 10개만 가져옴
-  const url = `${NAVER_ENDPOINT}?query=${encText}&display=10&start=1&sort=${SORT}`
-
-  const res = await fetch(url, {
-    headers: {
-      'X-Naver-Client-Id': client_id,
-      'X-Naver-Client-Secret': client_secret,
-    },
-    cache: 'no-store',
-  })
-
-  if (!res.ok) {
-    throw new Error(`Naver API Error: ${res.statusText}`)
-  }
-
-  const data = await res.json()
-  return (data.items || []) as NaverNewsItem[]
 }

@@ -176,7 +176,7 @@ export default function NewsPage() {
     const [trendDays, setTrendDays] = useState<TrendDays>(7)
 
     // 키워드: 쉼표(,) 구분 (트렌드), 리스트 필터는 공백/쉼표 모두 AND 처리
-    const [query, setQuery] = useState('한화투자증권')
+    const [query, setQuery] = useState('')
     const [selectedPublishers, setSelectedPublishers] = useState<string[]>([])
     const [notice, setNotice] = useState<string | null>(null)
     const [showPublishers, setShowPublishers] = useState(false) // 기본: 접힘
