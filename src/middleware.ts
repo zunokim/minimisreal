@@ -9,6 +9,7 @@ const PUBLIC_PREFIXES = [
   '/favicon.ico',
   '/robots.txt',
   '/sitemap.xml',
+  '/news',       // [추가] 뉴스 브리핑 페이지 등은 로그인 없이 접근 허용
 ]
 
 export async function middleware(req: NextRequest) {
