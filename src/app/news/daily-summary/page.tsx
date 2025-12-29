@@ -50,7 +50,7 @@ const groupArticlesByTitle = (articles: any[]) => {
     return Object.values(groups);
 }
 
-// 기사 카드 컴포넌트
+// 기사 카드 컴포넌트 (배지 제거됨)
 const ArticleCard = ({ articles, keyword }: { articles: any[], keyword: string }) => {
     const mainItem = articles[0]; 
     const duplicateCount = articles.length - 1; 
@@ -117,7 +117,6 @@ function SummaryContent() {
   const [chartData, setChartData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   
-  // [변경 1] 기본값을 true로 설정하여 항상 펼쳐져 있게 함
   const [isResearchOpen, setIsResearchOpen] = useState(true)
 
   const supabase = createBrowserClient(
@@ -126,7 +125,6 @@ function SummaryContent() {
   )
 
   useEffect(() => {
-    // 뒤로가기 쿠션
     window.history.pushState(null, '', window.location.href);
     const handlePopState = () => {};
     window.addEventListener('popstate', handlePopState);
@@ -162,14 +160,23 @@ function SummaryContent() {
 
         groupedArticles.forEach((group) => {
             const mainItem = group[0];
-            const rawText = (mainItem.title + mainItem.content).toLowerCase();
             
-            // [변경 2] 분류 키워드 추가: 연구원, 애널리스트, 리포트
-            if (
-                rawText.includes('연구원') || 
-                rawText.includes('애널리스트') || 
-                rawText.includes('리포트')
-            ) {
+            const combinedText = (
+                (mainItem.title || '') + 
+                (mainItem.content || '') + 
+                (mainItem.description || '')
+            ).toLowerCase();
+            
+            // 그룹 내 기사 중 하나라도 manual이면 리서치로 분류
+            const isManualResearch = group.some((item: any) => item.category === 'research');
+            
+            const hasKeyword = (
+                combinedText.includes('연구원') || 
+                combinedText.includes('애널리스트') || 
+                combinedText.includes('리포트') 
+            );
+
+            if (isManualResearch || hasKeyword) {
                 research.push(group);
             } else {
                 general.push(group);
@@ -324,7 +331,6 @@ function SummaryContent() {
               )}
             </section>
 
-            {/* 리서치 리포트 관련 섹션 (기본 펼침) */}
             <section className="mt-8">
                 <button 
                     onClick={() => setIsResearchOpen(!isResearchOpen)}

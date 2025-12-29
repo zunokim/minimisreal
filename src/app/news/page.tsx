@@ -1,11 +1,11 @@
-//src\app\news\page.tsx
+// src/app/news/page.tsx
 'use client'
 
 import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import {
-  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon, X as XIcon, Calendar as CalendarIcon, Info
+  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon, X as XIcon, Calendar as CalendarIcon, Info, CheckCircle, FileText
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -29,6 +29,7 @@ type NewsRow = {
   source_url: string
   published_at: string | null
   fetched_at: string | null
+  category?: string | null
 }
 
 type ListResp = { ok: boolean; list: NewsRow[]; publishers: string[] }
@@ -48,15 +49,10 @@ type TrendResp = {
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
-// ✅ [수정 1] 날짜 그룹핑을 '무조건 한국 시간(KST)' 기준으로 통일
-// 기존: 로컬 시간 기준 -> 사용자에 따라 날짜가 밀릴 수 있음
-// 변경: UTC 시간에 9시간을 더해 날짜를 계산하여 서버 통계와 싱크를 맞춤
 function getKSTDateString(dateISO: string | null) {
     if (!dateISO) return ''
     const date = new Date(dateISO);
-    // UTC 타임스탬프 + 9시간 (KST)
     const kstDate = new Date(date.getTime() + (9 * 60 * 60 * 1000));
-    // YYYY-MM-DD 형식 반환
     return kstDate.toISOString().split('T')[0];
 }
 
@@ -110,8 +106,6 @@ function CustomTooltip(props: any) {
   return (
     <div className="rounded-lg border bg-white p-3 shadow-lg max-w-[80vw]" style={{ pointerEvents: 'none' }}>
       <div className="text-sm font-semibold text-gray-800 mb-2 border-b pb-1">{String(dateLabel)}</div>
-      
-      {/* Total은 항상 표시 */}
       {typeof totalItem?.value !== 'undefined' && (
         <div className="flex items-center gap-2 text-sm mb-1">
           <span className="inline-block h-2 w-2 rounded-sm bg-orange-200" />
@@ -119,8 +113,6 @@ function CustomTooltip(props: any) {
           <span className="ml-auto font-bold text-gray-900">{totalItem.value}건</span>
         </div>
       )}
-
-      {/* 키워드 검색 결과 */}
       {termItems.map((it: any) => (
         <div key={String(it.dataKey)} className="flex items-center gap-2 text-sm">
           <span className="inline-block h-2 w-2 rounded-full bg-orange-500" />
@@ -183,17 +175,14 @@ export default function NewsPage() {
     })
   }, [listRaw, query, selectedPublishers])
 
-  // ✅ [수정 2] 그룹핑 로직에 KST 날짜 함수 적용
   const grouped = useMemo(() => {
     const map = new Map<string, NewsRow[]>()
     for (const n of filtered) {
-      // getKSTDateString 사용으로 날짜 밀림 현상 방지
       const key = getKSTDateString(n.published_at || n.fetched_at)
       const arr = map.get(key) || []
       arr.push(n)
       map.set(key, arr)
     }
-    // 날짜 내림차순 정렬
     return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1))
   }, [filtered])
 
@@ -223,6 +212,25 @@ export default function NewsPage() {
 
     setNotice(`수집 완료: ${delta > 0 ? `${delta}건의 새로운 기사를 가져왔습니다.` : '새로운 기사가 없습니다.'}`)
     mutate()
+  }
+
+  const forceResearch = async (id: string) => {
+      if (!confirm('이 기사를 [리서치 리포트]로 강제 분류하시겠습니까?')) return;
+      try {
+        const res = await fetch('/api/news/update-category', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, category: 'research' })
+        });
+        if (res.ok) {
+            alert('반영되었습니다!');
+            mutate(); 
+        } else {
+            alert('실패했습니다.');
+        }
+      } catch (e) {
+          alert('에러 발생');
+      }
   }
 
   return (
@@ -300,7 +308,6 @@ export default function NewsPage() {
           <div className="flex items-center gap-2">
              <LineChartIcon className="h-4 w-4 text-gray-600" />
              <h2 className="text-lg font-semibold">일별 트렌드</h2>
-             {/* ✅ [수정 3] 사용자가 혼동하지 않도록 안내 툴팁 추가 */}
              <div className="group relative">
                 <Info className="w-4 h-4 text-gray-400 cursor-help" />
                 <div className="absolute left-0 bottom-6 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg hidden group-hover:block z-10">
@@ -324,20 +331,16 @@ export default function NewsPage() {
               <YAxis allowDecimals={false} tick={{fontSize: 12}} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{fontSize: '12px'}} />
-              
-              {/* 전체 기사 수 (막대) */}
               <Bar dataKey="total" name="전체 발행량" fill="#fed7aa" radius={[4, 4, 0, 0]}>
                 <LabelList dataKey="total" position="top" style={{ fill: '#9ca3af', fontSize: 10 }} />
               </Bar>
-
-              {/* 검색어 트렌드 (선) */}
               {(trend?.terms || []).map((t, idx) => (
                 <Line
                   key={t}
                   type="monotone"
                   dataKey={t}
                   name={`"${t}" 포함`}
-                  stroke={['#ea580c', '#db2777', '#7c3aed'][idx % 3]} // 색상 순환
+                  stroke={['#ea580c', '#db2777', '#7c3aed'][idx % 3]} 
                   strokeWidth={2}
                   dot={{ r: 4 }}
                   activeDot={{ r: 6 }}
@@ -348,7 +351,6 @@ export default function NewsPage() {
         </div>
       </section>
 
-      {/* 리스트 영역 */}
       {grouped.map(([date, items]) => (
         <section key={date} className="rounded-xl border bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -358,18 +360,54 @@ export default function NewsPage() {
             </span>
           </div>
           <ul className="divide-y">
-            {items.map((n) => (
-              <li key={n.id} className="py-3">
-                <Link href={n.source_url} target="_blank" className="font-medium hover:text-orange-600 block mb-1">
-                    {highlight(decodeHtmlEntities(n.title), queryTerms)}
-                    <ExternalLink className="inline ml-1 h-3 w-3 text-gray-400" />
-                </Link>
-                <div className="text-xs text-gray-500 mb-1">
-                    {n.publisher || 'Unknown'} · {hhmm(n.published_at || n.fetched_at)}
-                </div>
-                {n.snippet && <p className="text-sm text-gray-600 line-clamp-2">{highlight(decodeHtmlEntities(n.snippet), queryTerms)}</p>}
-              </li>
-            ))}
+            {items.map((n) => {
+              // 1. 수동 지정 여부
+              const isManual = n.category === 'research';
+              
+              // 2. 자동 감지 여부 (제목+본문+요약문에서 키워드 검색)
+              const combinedText = (n.title + (n.content || '') + (n.snippet || '')).toLowerCase();
+              const isAuto = !isManual && (
+                  combinedText.includes('연구원') || 
+                  combinedText.includes('애널리스트') || 
+                  combinedText.includes('리포트')
+              );
+
+              return (
+                <li key={n.id} className="py-3 group relative">
+                    {/* 수동 분류 버튼 (Hover 시 노출) */}
+                    <button
+                        onClick={() => forceResearch(n.id)}
+                        className="absolute right-0 top-3 opacity-0 group-hover:opacity-100 transition-opacity bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-200 z-10 font-medium"
+                    >
+                        리서치로 분류
+                    </button>
+
+                    <Link href={n.source_url} target="_blank" className="font-medium hover:text-orange-600 block mb-1 pr-20"> 
+                        {highlight(decodeHtmlEntities(n.title), queryTerms)}
+                        <ExternalLink className="inline ml-1 h-3 w-3 text-gray-400" />
+                    </Link>
+                    
+                    <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
+                        <span>{n.publisher || 'Unknown'} · {hhmm(n.published_at || n.fetched_at)}</span>
+                        
+                        {/* 🟣 Manual Research 배지 */}
+                        {isManual && (
+                            <span className="flex items-center gap-0.5 bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded font-bold border border-purple-100">
+                                <CheckCircle className="w-3 h-3" /> Manual Research
+                            </span>
+                        )}
+
+                        {/* 🔵 Automatic Research 배지 */}
+                        {isAuto && (
+                            <span className="flex items-center gap-0.5 bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold border border-blue-100">
+                                <FileText className="w-3 h-3" /> Automatic Research
+                            </span>
+                        )}
+                    </div>
+                    {n.snippet && <p className="text-sm text-gray-600 line-clamp-2">{highlight(decodeHtmlEntities(n.snippet), queryTerms)}</p>}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}

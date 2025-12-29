@@ -1,125 +1,55 @@
 // src/app/api/news/list/route.ts
-export const runtime = 'nodejs'
+import { NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+
 export const dynamic = 'force-dynamic'
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
-/**
- * KST(+09:00) 하루 범위를 그대로 문자열로 생성
- * 예) 2025-08-14 → 
- *   start = '2025-08-14T00:00:00+09:00'
- *   end   = '2025-08-15T00:00:00+09:00'
- */
-function kstRangeStrings(dateStr: string) {
-  const [y, m, d] = dateStr.split('-').map((s) => Number(s))
-  const start = new Date(y, m - 1, d, 0, 0, 0) // 로컬(서버) 타임존 기준 Date 객체
-  const end = new Date(y, m - 1, d + 1, 0, 0, 0)
-
-  // 날짜 부분은 dateStr 사용, +09:00 고정 문자열로 생성 (toISOString() 사용 금지)
-  const fmt = (dt: Date) => {
-    const yy = dt.getFullYear()
-    const mm = String(dt.getMonth() + 1).padStart(2, '0')
-    const dd = String(dt.getDate()).padStart(2, '0')
-    return `${yy}-${mm}-${dd}T00:00:00+09:00`
-  }
-
-  return { startKST: fmt(start), endKST: fmt(end) }
-}
-
-// HTML 태그 제거 + 공백 정리
-function stripHtml(html?: string | null) {
-  if (!html) return ''
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function makeSnippet(content?: string | null, maxLen = 160) {
-  const plain = stripHtml(content)
-  if (plain.length <= maxLen) return plain
-  return plain.slice(0, maxLen - 1) + '…'
-}
-
-export async function GET(req: NextRequest) {
+export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(req.url)
-    const daysParam = searchParams.get('days')
-    const dateParam = searchParams.get('date') // YYYY-MM-DD
+    const { searchParams } = new URL(request.url)
+    const days = searchParams.get('days')
+    const date = searchParams.get('date')
 
-    // 기본 3일
-    const days = (daysParam === '1' || daysParam === '3' || daysParam === '7')
-      ? Number(daysParam)
-      : 3
+    let query = supabase
+      .from('news_articles')
+      .select('*') // ✅ '*'로 해두면 category 포함 모든 컬럼을 가져오므로 안전합니다.
+      .order('published_at', { ascending: false })
 
-    // ─────────────────────
-    // ① 특정 일자 모드 (KST 기준)
-    // ─────────────────────
-    if (dateParam) {
-      const { startKST, endKST } = kstRangeStrings(dateParam)
-
-      // published_at이 해당 KST 날짜 범위에 있거나,
-      // published_at이 NULL이고 fetched_at이 범위에 있는 경우 포함 (OR)
-      const orExpr = [
-        `and(published_at.gte.${startKST},published_at.lt.${endKST})`,
-        `and(published_at.is.null,fetched_at.gte.${startKST},fetched_at.lt.${endKST})`,
-      ].join(',')
-
-      const { data, error } = await supabaseAdmin
-        .from('news_articles')
-        .select('id,title,content,publisher,source_url,published_at,fetched_at', { count: 'exact' })
-        .or(orExpr)
-        .order('published_at', { ascending: false, nullsFirst: false })
-        .order('fetched_at', { ascending: false })
-        .limit(1000)
-
-      if (error) throw error
-
-      const list = (data ?? []).map((r) => ({
-        ...r,
-        snippet: makeSnippet(r.content),
-      }))
-
-      const publishers = Array.from(
-        new Set(list.map((r) => r.publisher || 'Unknown'))
-      ).sort((a, b) => a.localeCompare(b, 'ko'))
-
-      return NextResponse.json({ ok: true, list, publishers })
+    // 날짜 필터링 로직
+    if (date) {
+      // 특정 날짜 (KST 기준)
+      // DB는 UTC로 저장되므로, 해당 날짜의 00:00~23:59 (KST) 범위를 UTC로 변환해서 검색해야 정확함
+      // 여기서는 간단하게 문자열 매칭이나 범위 검색을 사용
+      const start = `${date}T00:00:00+09:00`
+      const end = `${date}T23:59:59+09:00`
+      query = query.gte('published_at', start).lte('published_at', end)
+    } else {
+      // 최근 N일
+      const d = parseInt(days || '3', 10)
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() - d)
+      query = query.gte('published_at', cutoffDate.toISOString())
     }
 
-    // ─────────────────────
-    // ② 최근 N일 모드 (단순 fetched_at 기준)
-    //    * UI의 1/3/7일은 목록 필터용이므로 여기서는 UTC 기준 단순 범위여도 충분
-    // ─────────────────────
-    const now = new Date()
-    const from = new Date(now)
-    from.setDate(from.getDate() - days)
-
-    const { data, error } = await supabaseAdmin
-      .from('news_articles')
-      .select('id,title,content,publisher,source_url,published_at,fetched_at', { count: 'exact' })
-      .gte('fetched_at', from.toISOString())
-      .lt('fetched_at', now.toISOString())
-      .order('fetched_at', { ascending: false })
-      .limit(1000)
+    // 최대 300개 제한 (성능 고려)
+    const { data, error } = await query.limit(300)
 
     if (error) throw error
 
-    const list = (data ?? []).map((r) => ({
-      ...r,
-      snippet: makeSnippet(r.content),
-    }))
+    // 언론사 목록 추출 (필터용)
+    const publishers = Array.from(new Set(data.map((n) => n.publisher).filter(Boolean))) as string[]
 
-    const publishers = Array.from(
-      new Set(list.map((r) => r.publisher || 'Unknown'))
-    ).sort((a, b) => a.localeCompare(b, 'ko'))
-
-    return NextResponse.json({ ok: true, list, publishers })
-  } catch (err) {
-    console.error('[api/news/list]', err)
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
+    return NextResponse.json({
+      ok: true,
+      list: data,
+      publishers: publishers.sort(),
+    })
+  } catch (error: any) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 }
