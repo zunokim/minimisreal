@@ -5,19 +5,10 @@ import { useMemo, useState } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import {
-  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon, X as XIcon, Calendar as CalendarIcon, Info, CheckCircle, FileText
+  ExternalLink, RefreshCcw, Search, FilterX, LineChart as LineChartIcon, X as XIcon, Calendar as CalendarIcon, Info, CheckCircle, FileText, ArrowDown, ArrowUp, Ban
 } from 'lucide-react'
 import {
-  ResponsiveContainer,
-  ComposedChart,
-  Line,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-  LabelList,
+  ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, LabelList,
 } from 'recharts'
 
 type NewsRow = {
@@ -214,17 +205,21 @@ export default function NewsPage() {
     mutate()
   }
 
-  const forceResearch = async (id: string) => {
-      if (!confirm('이 기사를 [리서치 리포트]로 강제 분류하시겠습니까?')) return;
+  // ✅ [수정] 카테고리 변경 함수 (대상 카테고리를 직접 지정)
+  const changeCategory = async (id: string, targetCategory: string) => {
+      const actionName = targetCategory === 'general' ? '일반 기사로' : '리서치로';
+
+      if (!confirm(`이 기사를 [${actionName}] 변경하시겠습니까?`)) return;
+      
       try {
         const res = await fetch('/api/news/update-category', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, category: 'research' })
+            body: JSON.stringify({ id, category: targetCategory })
         });
         if (res.ok) {
-            alert('반영되었습니다!');
-            mutate(); 
+            alert('변경되었습니다!');
+            mutate(); // 데이터 갱신
         } else {
             alert('실패했습니다.');
         }
@@ -361,28 +356,38 @@ export default function NewsPage() {
           </div>
           <ul className="divide-y">
             {items.map((n) => {
-              // 1. 수동 지정 여부
-              const isManual = n.category === 'research';
+              // ✅ [수정] 3가지 상태 판별 로직
+              const isManualResearch = n.category === 'research'; // 수동 리서치
+              const isManualGeneral = n.category === 'general';   // 수동 일반 (Auto 무시용)
               
-              // 2. 자동 감지 여부 (제목+본문+요약문에서 키워드 검색)
               const combinedText = (n.title + (n.content || '') + (n.snippet || '')).toLowerCase();
-              const isAuto = !isManual && (
-                  combinedText.includes('연구원') || 
-                  combinedText.includes('애널리스트') || 
-                  combinedText.includes('리포트')
-              );
+              const hasKeyword = combinedText.includes('연구원') || combinedText.includes('애널리스트') || combinedText.includes('리포트');
+
+              // Auto 조건: 수동으로 일반/리서치 지정 안 했고, 키워드만 있을 때
+              const isAuto = !isManualResearch && !isManualGeneral && hasKeyword;
 
               return (
                 <li key={n.id} className="py-3 group relative">
-                    {/* 수동 분류 버튼 (Hover 시 노출) */}
-                    <button
-                        onClick={() => forceResearch(n.id)}
-                        className="absolute right-0 top-3 opacity-0 group-hover:opacity-100 transition-opacity bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-200 z-10 font-medium"
-                    >
-                        리서치로 분류
-                    </button>
+                    {/* ✅ [버튼 로직] */}
+                    {/* 1. 리서치(수동) or Auto 상태면 -> '일반으로 변경' 버튼 노출 */}
+                    {(isManualResearch || isAuto) ? (
+                         <button
+                            onClick={() => changeCategory(n.id, 'general')}
+                            className="absolute right-0 top-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-2 py-1 rounded z-10 font-medium border bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200"
+                        >
+                            <span className="flex items-center gap-1"><ArrowDown className="w-3 h-3" /> 일반으로 변경</span>
+                        </button>
+                    ) : (
+                    /* 2. 일반(수동) or 그냥 일반 상태면 -> '리서치로 분류' 버튼 노출 */
+                        <button
+                            onClick={() => changeCategory(n.id, 'research')}
+                            className="absolute right-0 top-3 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-2 py-1 rounded z-10 font-medium border bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-200"
+                        >
+                            <span className="flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 리서치로 분류</span>
+                        </button>
+                    )}
 
-                    <Link href={n.source_url} target="_blank" className="font-medium hover:text-orange-600 block mb-1 pr-20"> 
+                    <Link href={n.source_url} target="_blank" className="font-medium hover:text-orange-600 block mb-1 pr-24"> 
                         {highlight(decodeHtmlEntities(n.title), queryTerms)}
                         <ExternalLink className="inline ml-1 h-3 w-3 text-gray-400" />
                     </Link>
@@ -391,16 +396,23 @@ export default function NewsPage() {
                         <span>{n.publisher || 'Unknown'} · {hhmm(n.published_at || n.fetched_at)}</span>
                         
                         {/* 🟣 Manual Research 배지 */}
-                        {isManual && (
+                        {isManualResearch && (
                             <span className="flex items-center gap-0.5 bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded font-bold border border-purple-100">
-                                <CheckCircle className="w-3 h-3" /> Manual Research
+                                <CheckCircle className="w-3 h-3" /> Manual
                             </span>
                         )}
 
-                        {/* 🔵 Automatic Research 배지 */}
+                        {/* 🔵 Auto Research 배지 */}
                         {isAuto && (
                             <span className="flex items-center gap-0.5 bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold border border-blue-100">
-                                <FileText className="w-3 h-3" /> Automatic Research
+                                <FileText className="w-3 h-3" /> Auto
+                            </span>
+                        )}
+                        
+                        {/* ⚪ Manual General 배지 (확인용, 필요 없으면 삭제 가능) */}
+                        {isManualGeneral && hasKeyword && (
+                            <span className="flex items-center gap-0.5 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold border border-gray-200" title="키워드가 있지만 일반 기사로 지정됨">
+                                <Ban className="w-3 h-3" /> General
                             </span>
                         )}
                     </div>

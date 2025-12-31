@@ -32,7 +32,7 @@ export async function POST(request: Request) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: sub.chat_id,
-            text: `📢 <b>[테스트 방송]</b>\n\n안녕하세요 ${sub.first_name || '구독자'}님!\n관리자가 보낸 테스트 메시지가 정상 수신되었습니다.`,
+            text: `📢 <b>[업데이트 공지]</b>\n\n안녕하세요 ${sub.first_name || '구독자'}님!\n관리자가 보낸 테스트 메시지가 정상 수신되었습니다.`,
             parse_mode: 'HTML',
           }),
         })
