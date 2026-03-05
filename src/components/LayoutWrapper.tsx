@@ -14,8 +14,9 @@ type NavItem = { name: string; href: string; icon: React.ReactNode }
 
 const navItems: NavItem[] = [
   { name: 'Home',           href: '/',               icon: <Home className="w-4 h-4" /> },
-  // ✅ [추가됨] AI Dashboard 메뉴
   { name: 'AI Dashboard',   href: '/dashboard',      icon: <LayoutDashboard className="w-4 h-4" /> },
+  // ✅ AI Dashboard 바로 밑에 추가됨
+  { name: 'Weekly IR',      href: '/weekly-ir',      icon: <FileText className="w-4 h-4" /> },
   { name: 'Board',          href: '/board',          icon: <FileText className="w-4 h-4" /> },
   { name: 'Schedule',       href: '/schedule',       icon: <Calendar className="w-4 h-4" /> },
   { name: 'Data',           href: '/data',           icon: <BarChart3 className="w-4 h-4" /> },
