@@ -1,9 +1,10 @@
-//src\app\news\alerts\page.tsx
+// src/app/news/alerts/page.tsx
 
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import Link from 'next/link' // ✅ Link 컴포넌트 추가
 
 // --- 키워드 시각화 컴포넌트 ---
 const KeywordVisualizer = ({ text }: { text: string }) => {
@@ -77,7 +78,7 @@ export default function NewsAlertPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // --- 키워드 관련 함수들 (등록, 삭제, 수정) ---
+  // --- 키워드 관련 함수들 ---
   const addKeyword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
@@ -113,7 +114,6 @@ export default function NewsAlertPage() {
     else { setEditingId(null); fetchData() }
   }
 
-  // --- [NEW] 공지사항 발송 함수 ---
   const sendAnnouncement = async () => {
     if (!announcement.trim()) return alert('공지 내용을 입력해주세요.')
     if (subCount === 0) return alert('구독자가 없습니다.')
@@ -131,7 +131,7 @@ export default function NewsAlertPage() {
       
       if (res.ok) {
         alert(`발송 성공! (성공: ${json.sent} / 전체: ${json.total})`)
-        setAnnouncement('') // 입력창 초기화
+        setAnnouncement('')
       } else {
         alert(`발송 실패: ${json.error}`)
       }
@@ -141,7 +141,6 @@ export default function NewsAlertPage() {
     setIsSendingAnnouncement(false)
   }
 
-  // --- 기존 테스트 발송 함수 ---
   const sendTestBroadcast = async () => {
     if (!confirm(`테스트 메시지를 보내시겠습니까?`)) return
     setSendingTest(true)
@@ -161,16 +160,30 @@ export default function NewsAlertPage() {
           <h1 className="text-2xl font-bold text-gray-900 mb-2">📢 뉴스 브리핑 센터</h1>
           <p className="text-gray-600">현재 <b>{subCount}명</b>의 구독자가 있습니다.</p>
         </div>
-        <button onClick={sendTestBroadcast} disabled={sendingTest || subCount === 0} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">
-          {sendingTest ? '...' : '🔔 연결 테스트 (Ping)'}
-        </button>
+        
+        {/* 버튼 그룹 */}
+        <div className="flex gap-2">
+          {/* ✅ 데일리 요약 페이지 이동 버튼 추가 */}
+          <Link href="/news/daily-summary">
+            <button className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 text-sm font-semibold border border-blue-200 transition">
+              🗞️ 데일리 요약 보기
+            </button>
+          </Link>
+          
+          <button 
+            onClick={sendTestBroadcast} 
+            disabled={sendingTest || subCount === 0} 
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm transition"
+          >
+            {sendingTest ? '...' : '🔔 연결 테스트 (Ping)'}
+          </button>
+        </div>
       </div>
 
       {/* 1. 키워드 관리 섹션 */}
       <section>
         <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-blue-500 pl-3">뉴스 키워드 관리</h2>
         
-        {/* 등록 폼 */}
         <div className="bg-blue-50 p-5 rounded-2xl mb-6 border border-blue-100">
           <form onSubmit={addKeyword} className="flex flex-col md:flex-row gap-3">
             <div className="flex-1">
@@ -183,7 +196,6 @@ export default function NewsAlertPage() {
           </form>
         </div>
 
-        {/* 목록 */}
         <ul className="grid gap-3">
           {keywords.map((item) => (
             <li key={item.id} className="p-5 bg-white border border-gray-100 rounded-xl shadow-sm">
@@ -218,7 +230,7 @@ export default function NewsAlertPage() {
         </ul>
       </section>
 
-      {/* 2. 전체 공지 발송 섹션 (NEW) */}
+      {/* 2. 전체 공지 발송 섹션 */}
       <section className="pt-6 border-t border-gray-200">
         <h2 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-red-500 pl-3">
           📢 전체 구독자 공지 발송

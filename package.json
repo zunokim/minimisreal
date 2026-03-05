@@ -13,6 +13,7 @@
     "@fullcalendar/interaction": "^6.1.19",
     "@fullcalendar/react": "^6.1.19",
     "@fullcalendar/timegrid": "^6.1.19",
+    "@google/generative-ai": "^0.24.1",
     "@sparticuz/chromium": "^143.0.0",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/ssr": "^0.6.1",
@@ -30,9 +31,10 @@
     "puppeteer-core": "^24.34.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "recharts": "^3.6.0",
+    "recharts": "^3.7.0",
     "swr": "^2.3.6",
     "xlsx": "^0.18.5",
+    "yahoo-finance2": "^3.13.2",
     "zod": "^4.0.17"
   },
   "devDependencies": {
